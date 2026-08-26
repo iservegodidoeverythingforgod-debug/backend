@@ -1,0 +1,11 @@
+node_modules/
+dist/
+uploads/*
+!uploads/.gitkeep
+*.sqlite
+
+.env
+.env.production
+.env.local
+.env.example
+*.log

@@ -1,0 +1,51 @@
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  OneToMany,
+} from 'typeorm';
+import { GrowthStage } from './growth-stage.entity';
+import { Product } from './product.entity';
+
+export type InputType = 'number' | 'enum';
+
+export interface InputDefinition {
+  key: string;
+  type: InputType;
+  enumValues?: string[];
+}
+
+@Entity('growth_rules')
+export class GrowthRule {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  name: string;
+
+  @Column({ type: 'text', nullable: true })
+  description: string;
+
+  @Column({ default: false })
+  is_default: boolean;
+
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  input_definitions: InputDefinition[];
+
+  @OneToMany(() => GrowthStage, (stage) => stage.rule, {
+    cascade: true,
+    eager: true,
+  })
+  stages: GrowthStage[];
+
+  @OneToMany(() => Product, (product) => product.growth_rule)
+  products: Product[];
+
+  @CreateDateColumn()
+  created_at: Date;
+
+  @UpdateDateColumn()
+  updated_at: Date;
+}

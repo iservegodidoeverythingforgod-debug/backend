@@ -1,0 +1,431 @@
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, IsNull } from 'typeorm';
+import {
+  ChatConversation,
+  ConversationStatus,
+} from '../database/entities/chat-conversation.entity';
+import {
+  ChatMessage,
+  SenderType,
+} from '../database/entities/chat-message.entity';
+import { User } from '../database/entities/user.entity';
+import { CreateConversationDto, SendMessageDto } from './dto';
+
+@Injectable()
+export class ChatService {
+  constructor(
+    @InjectRepository(ChatConversation)
+    private readonly convRepo: Repository<ChatConversation>,
+    @InjectRepository(ChatMessage)
+    private readonly msgRepo: Repository<ChatMessage>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+  ) {}
+
+  // ==========================================
+  // CUSTOMER CHAT METHODS
+  // ==========================================
+
+  /**
+   * Start a new conversation or post initial message in an active conversation
+   */
+  async createCustomerConversation(
+    customerId: string,
+    dto: CreateConversationDto,
+  ): Promise<{ conversation: ChatConversation; message: ChatMessage }> {
+    const trimmedMsg = dto.message?.trim();
+    if (!trimmedMsg) {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
+    // Check if customer already has an OPEN conversation
+    let conversation = await this.convRepo.findOne({
+      where: {
+        customer_id: customerId,
+        status: ConversationStatus.OPEN,
+      },
+      order: { updated_at: 'DESC' },
+    });
+
+    const now = new Date();
+
+    if (!conversation) {
+      conversation = this.convRepo.create({
+        customer_id: customerId,
+        status: ConversationStatus.OPEN,
+        subject: dto.subject?.trim() || 'General Customer Support',
+        last_message_at: now,
+      });
+      conversation = await this.convRepo.save(conversation);
+    } else {
+      conversation.last_message_at = now;
+      if (dto.subject?.trim()) {
+        conversation.subject = dto.subject.trim();
+      }
+      conversation = await this.convRepo.save(conversation);
+    }
+
+    // Create message
+    const message = this.msgRepo.create({
+      conversation_id: conversation.id,
+      sender_type: SenderType.CUSTOMER,
+      sender_id: customerId,
+      message: trimmedMsg,
+    });
+
+    const savedMessage = await this.msgRepo.save(message);
+
+    return {
+      conversation,
+      message: savedMessage,
+    };
+  }
+
+  /**
+   * List all conversations for the authenticated customer
+   */
+  async getCustomerConversations(customerId: string) {
+    const conversations = await this.convRepo.find({
+      where: { customer_id: customerId },
+      order: { last_message_at: 'DESC' },
+      relations: ['messages', 'customer'],
+    });
+
+    // Decorate each conversation with unreadCount and lastMessage
+    return conversations.map((conv) => {
+      const sortedMessages = (conv.messages || []).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+
+      const unreadCount = sortedMessages.filter(
+        (m) => m.sender_type === SenderType.ADMIN && !m.read_at,
+      ).length;
+
+      const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+
+      const { customer, ...safeConv } = conv;
+      return {
+        ...safeConv,
+        unread_count: unreadCount,
+        last_message: lastMessage,
+      };
+    });
+  }
+
+  /**
+   * Get single conversation details & full messages for the authenticated customer
+   */
+  async getCustomerConversationById(customerId: string, conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+      relations: ['messages', 'messages.sender', 'customer'],
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    // Strict customer authorization check
+    if (conversation.customer_id !== customerId) {
+      throw new ForbiddenException('You do not have permission to access this conversation');
+    }
+
+    const sortedMessages = (conversation.messages || []).sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+
+    return {
+      ...conversation,
+      messages: sortedMessages.map((m) => ({
+        id: m.id,
+        conversation_id: m.conversation_id,
+        sender_type: m.sender_type,
+        sender_id: m.sender_id,
+        sender_name: m.sender?.full_name || (m.sender_type === SenderType.ADMIN ? 'Support Admin' : 'Customer'),
+        message: m.message,
+        read_at: m.read_at,
+        created_at: m.created_at,
+      })),
+    };
+  }
+
+  /**
+   * Send a new message in an existing conversation as Customer
+   */
+  async sendCustomerMessage(
+    customerId: string,
+    conversationId: string,
+    dto: SendMessageDto,
+  ): Promise<ChatMessage> {
+    const trimmedMsg = dto.message?.trim();
+    if (!trimmedMsg) {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    if (conversation.customer_id !== customerId) {
+      throw new ForbiddenException('You do not have permission to post to this conversation');
+    }
+
+    // If closed, reopen upon customer message
+    const now = new Date();
+    if (conversation.status === ConversationStatus.CLOSED) {
+      conversation.status = ConversationStatus.OPEN;
+    }
+    conversation.last_message_at = now;
+    await this.convRepo.save(conversation);
+
+    const message = this.msgRepo.create({
+      conversation_id: conversation.id,
+      sender_type: SenderType.CUSTOMER,
+      sender_id: customerId,
+      message: trimmedMsg,
+    });
+
+    return this.msgRepo.save(message);
+  }
+
+  /**
+   * Mark all unread Admin messages in conversation as read by Customer
+   */
+  async markCustomerConversationAsRead(customerId: string, conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    if (conversation.customer_id !== customerId) {
+      throw new ForbiddenException('You do not have permission to update this conversation');
+    }
+
+    await this.msgRepo
+      .createQueryBuilder()
+      .update(ChatMessage)
+      .set({ read_at: new Date() })
+      .where('conversation_id = :convId AND sender_type = :senderType AND read_at IS NULL', {
+        convId: conversationId,
+        senderType: SenderType.ADMIN,
+      })
+      .execute();
+
+    return { success: true };
+  }
+
+  /**
+   * Close a customer conversation
+   */
+  async closeCustomerConversation(customerId: string, conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    if (conversation.customer_id !== customerId) {
+      throw new ForbiddenException('You do not have permission to close this conversation');
+    }
+
+    conversation.status = ConversationStatus.CLOSED;
+    return this.convRepo.save(conversation);
+  }
+
+  // ==========================================
+  // ADMIN CHAT METHODS
+  // ==========================================
+
+  /**
+   * List all conversations for Admin with optional status filter
+   */
+  async getAdminConversations(status?: ConversationStatus) {
+    const qb = this.convRepo
+      .createQueryBuilder('conv')
+      .leftJoinAndSelect('conv.customer', 'customer')
+      .leftJoinAndSelect('conv.messages', 'messages')
+      .orderBy('conv.last_message_at', 'DESC');
+
+    if (status) {
+      qb.andWhere('conv.status = :status', { status });
+    }
+
+    const conversations = await qb.getMany();
+
+    return conversations.map((conv) => {
+      const sortedMessages = (conv.messages || []).sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      );
+
+      const unreadCount = sortedMessages.filter(
+        (m) => m.sender_type === SenderType.CUSTOMER && !m.read_at,
+      ).length;
+
+      const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
+
+      return {
+        id: conv.id,
+        customer_id: conv.customer_id,
+        customer_name: conv.customer?.full_name || 'Customer',
+        customer_email: conv.customer?.email || '',
+        customer_avatar: conv.customer?.avatar_url || null,
+        status: conv.status,
+        subject: conv.subject,
+        last_message_at: conv.last_message_at,
+        created_at: conv.created_at,
+        updated_at: conv.updated_at,
+        unread_count: unreadCount,
+        last_message: lastMessage,
+      };
+    });
+  }
+
+  /**
+   * Get single conversation for Admin
+   */
+  async getAdminConversationById(conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+      relations: ['messages', 'messages.sender', 'customer'],
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const sortedMessages = (conversation.messages || []).sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+
+    return {
+      id: conversation.id,
+      customer_id: conversation.customer_id,
+      customer_name: conversation.customer?.full_name || 'Customer',
+      customer_email: conversation.customer?.email || '',
+      customer_phone: conversation.customer?.phone || null,
+      customer_avatar: conversation.customer?.avatar_url || null,
+      status: conversation.status,
+      subject: conversation.subject,
+      last_message_at: conversation.last_message_at,
+      created_at: conversation.created_at,
+      updated_at: conversation.updated_at,
+      messages: sortedMessages.map((m) => ({
+        id: m.id,
+        conversation_id: m.conversation_id,
+        sender_type: m.sender_type,
+        sender_id: m.sender_id,
+        sender_name: m.sender?.full_name || (m.sender_type === SenderType.ADMIN ? 'Support Admin' : 'Customer'),
+        message: m.message,
+        read_at: m.read_at,
+        created_at: m.created_at,
+      })),
+    };
+  }
+
+  /**
+   * Send a reply as Admin
+   */
+  async sendAdminMessage(
+    adminId: string,
+    conversationId: string,
+    dto: SendMessageDto,
+  ): Promise<ChatMessage> {
+    const trimmedMsg = dto.message?.trim();
+    if (!trimmedMsg) {
+      throw new BadRequestException('Message cannot be empty');
+    }
+
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    const now = new Date();
+    conversation.last_message_at = now;
+    await this.convRepo.save(conversation);
+
+    const message = this.msgRepo.create({
+      conversation_id: conversation.id,
+      sender_type: SenderType.ADMIN,
+      sender_id: adminId,
+      message: trimmedMsg,
+    });
+
+    return this.msgRepo.save(message);
+  }
+
+  /**
+   * Mark all unread Customer messages in conversation as read by Admin
+   */
+  async markAdminConversationAsRead(conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    await this.msgRepo
+      .createQueryBuilder()
+      .update(ChatMessage)
+      .set({ read_at: new Date() })
+      .where('conversation_id = :convId AND sender_type = :senderType AND read_at IS NULL', {
+        convId: conversationId,
+        senderType: SenderType.CUSTOMER,
+      })
+      .execute();
+
+    return { success: true };
+  }
+
+  /**
+   * Close conversation as Admin
+   */
+  async closeAdminConversation(conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    conversation.status = ConversationStatus.CLOSED;
+    return this.convRepo.save(conversation);
+  }
+
+  /**
+   * Reopen conversation as Admin
+   */
+  async reopenAdminConversation(conversationId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    conversation.status = ConversationStatus.OPEN;
+    return this.convRepo.save(conversation);
+  }
+}
