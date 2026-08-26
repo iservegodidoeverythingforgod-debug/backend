@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/http-exception.filter';
@@ -58,38 +58,9 @@ async function bootstrap() {
 
   // CORS Configuration
   const configuredCorsOrigin = process.env.CORS_ORIGIN;
-  const isProduction = process.env.NODE_ENV === 'production';
 
   app.enableCors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
-      if (!origin) return callback(null, true);
-
-      // In development or if explicitly allowed via CORS_ORIGIN
-      if (configuredCorsOrigin) {
-        const allowed = configuredCorsOrigin.split(',').map((s) => s.trim());
-        if (allowed.includes('*') || allowed.includes(origin)) {
-          return callback(null, true);
-        }
-      }
-
-      // Allow localhost and local dev network
-      if (
-        origin.startsWith('http://localhost') ||
-        origin.startsWith('http://127.0.0.1') ||
-        origin.startsWith('http://0.0.0.0') ||
-        origin.includes('.github.io')
-      ) {
-        return callback(null, true);
-      }
-
-      // If strict production and not matched, reject
-      if (isProduction && configuredCorsOrigin) {
-        return callback(new Error(`Origin ${origin} not allowed by CORS`));
-      }
-
-      return callback(null, true);
-    },
+    origin: configuredCorsOrigin,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
     allowedHeaders: 'Content-Type, Accept, Authorization, Cookie',
