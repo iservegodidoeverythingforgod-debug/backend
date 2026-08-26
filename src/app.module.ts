@@ -91,6 +91,7 @@ import { RolesGuard } from './common/guards/roles.guard';
             synchronize: false,
             ssl: isSupabaseOrRemote ? { rejectUnauthorized: false } : false,
             extra: {
+              family: 4,
               max: 10,
               min: 2,
               connectionTimeoutMillis: 10000,
