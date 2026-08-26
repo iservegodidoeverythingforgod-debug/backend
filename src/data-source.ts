@@ -17,7 +17,7 @@ import {
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const databaseUrl = process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/postgres';
+const databaseUrl = process.env.DATABASE_URL
 const isSupabaseOrRemote =
   databaseUrl.includes('supabase') ||
   databaseUrl.includes('render') ||
