@@ -11,14 +11,18 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery, ApiConsumes } from '@nestjs/swagger';
 import { ProductsService } from './products.service';
 import { CreateProductDto, UpdateProductDto } from './dto';
+import { BulkDeleteDto } from '../common/dto/bulk-delete.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Role } from '../common/enums';
 import { SupabaseStorageService } from '../common/storage/supabase-storage.service';
@@ -102,6 +106,19 @@ export class ProductsController {
   @ApiOperation({ summary: 'Delete a seed/herb product (Admin only)' })
   async remove(@Param('id') id: string) {
     return this.productsService.remove(id);
+  }
+
+  @Post('bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete products and their media files (Admin only)' })
+  async bulkRemove(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.productsService.bulkRemove(dto.ids, adminId);
   }
 
   @Post('upload-image')

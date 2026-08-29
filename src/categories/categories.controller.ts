@@ -7,13 +7,17 @@ import {
   Param,
   Body,
   UseGuards,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto';
+import { BulkDeleteDto } from '../common/dto/bulk-delete.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Role } from '../common/enums';
 
@@ -61,5 +65,18 @@ export class CategoriesController {
   @ApiOperation({ summary: 'Delete a category (Admin only)' })
   async remove(@Param('id') id: string) {
     return this.categoriesService.remove(id);
+  }
+
+  @Post('bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete categories (Admin only)' })
+  async bulkRemove(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.categoriesService.bulkRemove(dto.ids, adminId);
   }
 }

@@ -4,11 +4,14 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Review } from '../database/entities/review.entity';
 import { Product } from '../database/entities/product.entity';
 import { Order } from '../database/entities/order.entity';
 import { CreateReviewDto } from './dto';
+import { AuditLogService } from '../common/audit/audit-log.service';
+import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
+import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class ReviewsService {
@@ -19,6 +22,7 @@ export class ReviewsService {
     private productRepository: Repository<Product>,
     @InjectRepository(Order)
     private orderRepository: Repository<Order>,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(userId: string, dto: CreateReviewDto) {
@@ -145,5 +149,75 @@ export class ReviewsService {
       relations: ['user', 'product'],
       order: { created_at: 'ASC' },
     });
+  }
+
+  async remove(id: string) {
+    const review = await this.reviewRepository.findOne({ where: { id } });
+    if (!review) {
+      throw new NotFoundException(`Review with ID ${id} not found`);
+    }
+    await this.reviewRepository.delete(id);
+    return { success: true, message: 'Review deleted successfully' };
+  }
+
+  async bulkRemove(ids: string[], adminId: string): Promise<BulkDeleteResult> {
+    const succeededIds: string[] = [];
+    const failedItems: FailedItem[] = [];
+
+    await this.reviewRepository.manager.transaction(async (manager) => {
+      const existingReviews = await manager.find(Review, {
+        where: { id: In(ids) },
+      });
+
+      const foundMap = new Map(existingReviews.map((r) => [r.id, r]));
+
+      for (const id of ids) {
+        const review = foundMap.get(id);
+        if (!review) {
+          failedItems.push({ id, reason: `Review with ID ${id} not found` });
+          continue;
+        }
+
+        try {
+          await manager.delete(Review, { id });
+          succeededIds.push(id);
+        } catch (err) {
+          failedItems.push({
+            id,
+            reason: err instanceof Error ? err.message : 'Database error during review deletion',
+          });
+        }
+      }
+    });
+
+    const auditStatus =
+      failedItems.length === 0
+        ? AuditStatus.SUCCESS
+        : succeededIds.length > 0
+        ? AuditStatus.PARTIAL
+        : AuditStatus.FAILED;
+
+    await this.auditLogService.logAction({
+      adminId,
+      action: 'BULK_DELETE_REVIEWS',
+      targetType: 'reviews',
+      targetIds: succeededIds,
+      details: {
+        totalRequested: ids.length,
+        succeededCount: succeededIds.length,
+        failedCount: failedItems.length,
+        failedItems,
+      },
+      status: auditStatus,
+    });
+
+    return {
+      totalRequested: ids.length,
+      succeededCount: succeededIds.length,
+      failedCount: failedItems.length,
+      succeededIds,
+      failedItems,
+      action: 'BULK_DELETE_REVIEWS',
+    };
   }
 }

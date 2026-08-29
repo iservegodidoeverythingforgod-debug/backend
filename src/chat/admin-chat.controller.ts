@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Param,
   Body,
   Query,
@@ -13,6 +14,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { ChatService } from './chat.service';
 import { SendMessageDto } from './dto';
+import { BulkDeleteDto } from '../common/dto/bulk-delete.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -70,5 +72,24 @@ export class AdminChatController {
   @ApiOperation({ summary: 'Reopen a closed conversation as Admin' })
   async reopenConversation(@Param('id') id: string) {
     return this.chatService.reopenAdminConversation(id);
+  }
+
+  @Delete('conversations/:id')
+  @ApiOperation({ summary: 'Delete a single conversation and its messages (Admin only)' })
+  async deleteConversation(
+    @Param('id') id: string,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.chatService.deleteConversation(id, adminId);
+  }
+
+  @Post('conversations/bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Bulk delete support conversations and their messages (Admin only)' })
+  async bulkDeleteConversations(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.chatService.bulkDeleteConversations(dto.ids, adminId);
   }
 }

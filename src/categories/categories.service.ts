@@ -1,14 +1,19 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { Category } from '../database/entities/category.entity';
+import { Product } from '../database/entities/product.entity';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto';
+import { AuditLogService } from '../common/audit/audit-log.service';
+import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
+import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class CategoriesService {
   constructor(
     @InjectRepository(Category)
     private categoryRepository: Repository<Category>,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll() {
@@ -48,6 +53,75 @@ export class CategoriesService {
 
   async remove(id: string) {
     const category = await this.findOne(id);
+    // Unlink products
+    await this.categoryRepository.manager.update(
+      Product,
+      { category_id: id },
+      { category_id: null as any },
+    );
     return this.categoryRepository.remove(category);
+  }
+
+  async bulkRemove(ids: string[], adminId: string): Promise<BulkDeleteResult> {
+    const succeededIds: string[] = [];
+    const failedItems: FailedItem[] = [];
+
+    await this.categoryRepository.manager.transaction(async (manager) => {
+      const existingCategories = await manager.find(Category, {
+        where: { id: In(ids) },
+      });
+
+      const foundMap = new Map(existingCategories.map((c) => [c.id, c]));
+
+      for (const id of ids) {
+        const cat = foundMap.get(id);
+        if (!cat) {
+          failedItems.push({ id, reason: `Category with ID ${id} not found` });
+          continue;
+        }
+
+        try {
+          // Unlink products belonging to this category
+          await manager.update(Product, { category_id: id }, { category_id: null as any });
+          await manager.delete(Category, { id });
+          succeededIds.push(id);
+        } catch (err) {
+          failedItems.push({
+            id,
+            reason: err instanceof Error ? err.message : 'Database error during category deletion',
+          });
+        }
+      }
+    });
+
+    const auditStatus =
+      failedItems.length === 0
+        ? AuditStatus.SUCCESS
+        : succeededIds.length > 0
+        ? AuditStatus.PARTIAL
+        : AuditStatus.FAILED;
+
+    await this.auditLogService.logAction({
+      adminId,
+      action: 'BULK_DELETE_CATEGORIES',
+      targetType: 'categories',
+      targetIds: succeededIds,
+      details: {
+        totalRequested: ids.length,
+        succeededCount: succeededIds.length,
+        failedCount: failedItems.length,
+        failedItems,
+      },
+      status: auditStatus,
+    });
+
+    return {
+      totalRequested: ids.length,
+      succeededCount: succeededIds.length,
+      failedCount: failedItems.length,
+      succeededIds,
+      failedItems,
+      action: 'BULK_DELETE_CATEGORIES',
+    };
   }
 }

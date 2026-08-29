@@ -25,6 +25,7 @@ import {
   ResendOtpDto,
 } from './dto';
 import { OtpService } from './otp.service';
+import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
 
 @Injectable()
 export class AuthService {
@@ -38,6 +39,7 @@ export class AuthService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private otpService: OtpService,
+    private storageCleanupService: StorageCleanupService,
   ) {}
 
   /**
@@ -366,7 +368,15 @@ export class AuthService {
     if (dto.full_name !== undefined) user.full_name = dto.full_name;
     if (dto.phone !== undefined) user.phone = dto.phone;
     if (dto.address !== undefined) user.address = dto.address;
-    if (dto.avatar_url !== undefined) user.avatar_url = dto.avatar_url;
+    if (dto.avatar_url !== undefined) {
+      const oldAvatar = user.avatar_url;
+      if (oldAvatar && oldAvatar !== dto.avatar_url) {
+        this.storageCleanupService.deleteFileByUrl(oldAvatar).catch((err) => {
+          this.logger.warn(`Failed to cleanup old avatar '${oldAvatar}': ${err}`);
+        });
+      }
+      user.avatar_url = dto.avatar_url;
+    }
 
     return await this.userRepository.save(user);
   }

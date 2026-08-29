@@ -33,8 +33,10 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Public } from '../common/decorators/public.decorator';
 import { Role } from '../common/enums';
+import { BulkDeleteDto } from '../common/dto/bulk-delete.dto';
 import { memoryStorage } from 'multer';
 
 @ApiTags('Plant Growth Simulation Engine (Rule-based State Machine)')
@@ -264,5 +266,30 @@ export class GrowthEngineController {
   @ApiOperation({ summary: 'Delete an animation asset (Admin only)' })
   async deleteAnimationAsset(@Param('id') id: string) {
     return this.growthEngineService.deleteAnimation(id);
+  }
+
+  @Post('growth-engine/animations/bulk-delete')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete animation assets (Admin only)' })
+  async bulkDeleteAnimations(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.growthEngineService.bulkDeleteAnimations(dto.ids, adminId);
+  }
+
+  @Post('animation-assets/bulk-delete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Bulk delete animation assets (alias) (Admin only)' })
+  async bulkDeleteAnimationAssets(
+    @Body() dto: BulkDeleteDto,
+    @CurrentUser('id') adminId: string,
+  ) {
+    return this.growthEngineService.bulkDeleteAnimations(dto.ids, adminId);
   }
 }

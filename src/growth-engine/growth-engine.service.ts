@@ -24,6 +24,10 @@ import {
   SimulateGrowthDto,
 } from './dto';
 import { SupabaseStorageService } from '../common/storage/supabase-storage.service';
+import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
+import { AuditLogService } from '../common/audit/audit-log.service';
+import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
+import { AuditStatus } from '../database/entities/audit-log.entity';
 import { extname } from 'path';
 import { randomUUID } from 'crypto';
 
@@ -61,6 +65,7 @@ export interface SimulationResult {
   conditionResults: ConditionEvaluationResult[];
   animation: string;
   animationAssetUrl: string | null;
+  evaluation?: ConditionEvaluationResult;
 }
 
 @Injectable()
@@ -79,6 +84,8 @@ export class GrowthEngineService {
     @InjectRepository(AnimationAsset)
     private readonly animationAssetRepository: Repository<AnimationAsset>,
     private readonly supabaseStorageService: SupabaseStorageService,
+    private readonly storageCleanupService: StorageCleanupService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // ===========================================================================
@@ -177,7 +184,12 @@ export class GrowthEngineService {
     this.validateInputDefinitions(dto.input_definitions as InputDefinition[]);
 
     if (dto.is_default) {
-      await this.ruleRepository.update({}, { is_default: false });
+      await this.ruleRepository
+        .createQueryBuilder()
+        .update(GrowthRule)
+        .set({ is_default: false })
+        .where('is_default = :isDef', { isDef: true })
+        .execute();
     }
     const rule = this.ruleRepository.create({
       name: dto.name,
@@ -194,7 +206,12 @@ export class GrowthEngineService {
       this.validateInputDefinitions(dto.input_definitions as InputDefinition[]);
     }
     if (dto.is_default) {
-      await this.ruleRepository.update({}, { is_default: false });
+      await this.ruleRepository
+        .createQueryBuilder()
+        .update(GrowthRule)
+        .set({ is_default: false })
+        .where('is_default = :isDef', { isDef: true })
+        .execute();
     }
     Object.assign(rule, dto);
     return this.ruleRepository.save(rule);
@@ -653,18 +670,82 @@ export class GrowthEngineService {
     if (!asset) {
       throw new NotFoundException(`AnimationAsset with ID ${id} not found`);
     }
-    try {
-      const urlParts = asset.file_url.split('/animations/');
-      if (urlParts.length > 1) {
-        await this.supabaseStorageService.deleteFile('animations', urlParts[1]);
-      }
-    } catch (err) {
-      this.logger.warn(`Failed to delete animation file from storage: ${err}`);
+    if (asset.file_url) {
+      await this.storageCleanupService.deleteFileByUrl(asset.file_url);
     }
     await this.animationAssetRepository.remove(asset);
     return {
       success: true,
       message: `Animation asset '${asset.name}' deleted successfully`,
+    };
+  }
+
+  async bulkDeleteAnimations(ids: string[], adminId: string): Promise<BulkDeleteResult> {
+    const succeededIds: string[] = [];
+    const failedItems: FailedItem[] = [];
+    const filesToClean: string[] = [];
+
+    await this.animationAssetRepository.manager.transaction(async (manager) => {
+      const existing = await manager.find(AnimationAsset, {
+        where: { id: In(ids) },
+      });
+
+      const foundMap = new Map(existing.map((a) => [a.id, a]));
+
+      for (const id of ids) {
+        const asset = foundMap.get(id);
+        if (!asset) {
+          failedItems.push({ id, reason: `AnimationAsset with ID ${id} not found` });
+          continue;
+        }
+
+        try {
+          if (asset.file_url) filesToClean.push(asset.file_url);
+          await manager.delete(AnimationAsset, { id });
+          succeededIds.push(id);
+        } catch (err) {
+          failedItems.push({
+            id,
+            reason: err instanceof Error ? err.message : 'Database error during animation asset deletion',
+          });
+        }
+      }
+    });
+
+    if (filesToClean.length > 0) {
+      this.storageCleanupService.deleteFilesByUrls(filesToClean).catch((err) => {
+        this.logger.warn(`Storage cleanup failed for bulk deleted animations: ${err}`);
+      });
+    }
+
+    const auditStatus =
+      failedItems.length === 0
+        ? AuditStatus.SUCCESS
+        : succeededIds.length > 0
+        ? AuditStatus.PARTIAL
+        : AuditStatus.FAILED;
+
+    await this.auditLogService.logAction({
+      adminId,
+      action: 'BULK_DELETE_ANIMATION_ASSETS',
+      targetType: 'animation_assets',
+      targetIds: succeededIds,
+      details: {
+        totalRequested: ids.length,
+        succeededCount: succeededIds.length,
+        failedCount: failedItems.length,
+        failedItems,
+      },
+      status: auditStatus,
+    });
+
+    return {
+      totalRequested: ids.length,
+      succeededCount: succeededIds.length,
+      failedCount: failedItems.length,
+      succeededIds,
+      failedItems,
+      action: 'BULK_DELETE_ANIMATION_ASSETS',
     };
   }
 

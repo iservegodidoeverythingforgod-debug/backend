@@ -13,10 +13,10 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { ReportsModule } from './reports/reports.module';
 import { ChatModule } from './chat/chat.module';
 import { SettingsModule } from './settings/settings.module';
-import { DatabaseModule } from './database/database.module';
 import { SupabaseStorageModule } from './common/storage/supabase-storage.module';
 import { GrowthEngineModule } from './growth-engine/growth-engine.module';
 import { HealthController } from './health/health.controller';
+import { AuditModule } from './common/audit/audit.module';
 import {
   User,
   RefreshToken,
@@ -33,6 +33,7 @@ import {
   ChatMessage,
   AnimationAsset,
   StoreSetting,
+  AuditLog,
 } from './database/entities';
 
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -74,6 +75,7 @@ import { RolesGuard } from './common/guards/roles.guard';
           ChatMessage,
           AnimationAsset,
           StoreSetting,
+          AuditLog,
         ];
 
         // PostgreSQL (Supabase Direct Connection / Remote PostgreSQL)
@@ -108,7 +110,7 @@ import { RolesGuard } from './common/guards/roles.guard';
         };
       },
     }),
-    DatabaseModule,
+    AuditModule,
     SupabaseStorageModule,
     AuthModule,
     UsersModule,

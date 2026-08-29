@@ -13,3 +13,4 @@ export * from './chat-conversation.entity';
 export * from './chat-message.entity';
 export * from './animation-asset.entity';
 export * from './store-setting.entity';
+export * from './audit-log.entity';

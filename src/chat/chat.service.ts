@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, In } from 'typeorm';
 import {
   ChatConversation,
   ConversationStatus,
@@ -16,6 +16,9 @@ import {
 } from '../database/entities/chat-message.entity';
 import { User } from '../database/entities/user.entity';
 import { CreateConversationDto, SendMessageDto } from './dto';
+import { AuditLogService } from '../common/audit/audit-log.service';
+import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
+import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class ChatService {
@@ -26,6 +29,7 @@ export class ChatService {
     private readonly msgRepo: Repository<ChatMessage>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // ==========================================
@@ -427,5 +431,97 @@ export class ChatService {
 
     conversation.status = ConversationStatus.OPEN;
     return this.convRepo.save(conversation);
+  }
+
+  /**
+   * Delete a single conversation and all its messages
+   */
+  async deleteConversation(conversationId: string, adminId: string) {
+    const conversation = await this.convRepo.findOne({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation ${conversationId} not found`);
+    }
+
+    await this.convRepo.delete(conversationId);
+
+    await this.auditLogService.logAction({
+      adminId,
+      action: 'DELETE_CHAT_CONVERSATION',
+      targetType: 'chat_conversations',
+      targetIds: [conversationId],
+      status: AuditStatus.SUCCESS,
+    });
+
+    return {
+      success: true,
+      message: `Conversation ${conversationId} deleted successfully`,
+    };
+  }
+
+  /**
+   * Bulk delete chat conversations and messages
+   */
+  async bulkDeleteConversations(ids: string[], adminId: string): Promise<BulkDeleteResult> {
+    const succeededIds: string[] = [];
+    const failedItems: FailedItem[] = [];
+
+    await this.convRepo.manager.transaction(async (manager) => {
+      const existing = await manager.find(ChatConversation, {
+        where: { id: In(ids) },
+      });
+
+      const foundMap = new Map(existing.map((c) => [c.id, c]));
+
+      for (const id of ids) {
+        const conv = foundMap.get(id);
+        if (!conv) {
+          failedItems.push({ id, reason: `Conversation with ID ${id} not found` });
+          continue;
+        }
+
+        try {
+          await manager.delete(ChatConversation, { id });
+          succeededIds.push(id);
+        } catch (err) {
+          failedItems.push({
+            id,
+            reason: err instanceof Error ? err.message : 'Database error during chat conversation deletion',
+          });
+        }
+      }
+    });
+
+    const auditStatus =
+      failedItems.length === 0
+        ? AuditStatus.SUCCESS
+        : succeededIds.length > 0
+        ? AuditStatus.PARTIAL
+        : AuditStatus.FAILED;
+
+    await this.auditLogService.logAction({
+      adminId,
+      action: 'BULK_DELETE_CHAT_CONVERSATIONS',
+      targetType: 'chat_conversations',
+      targetIds: succeededIds,
+      details: {
+        totalRequested: ids.length,
+        succeededCount: succeededIds.length,
+        failedCount: failedItems.length,
+        failedItems,
+      },
+      status: auditStatus,
+    });
+
+    return {
+      totalRequested: ids.length,
+      succeededCount: succeededIds.length,
+      failedCount: failedItems.length,
+      succeededIds,
+      failedItems,
+      action: 'BULK_DELETE_CHAT_CONVERSATIONS',
+    };
   }
 }

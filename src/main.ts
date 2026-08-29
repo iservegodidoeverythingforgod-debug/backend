@@ -58,7 +58,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // CORS Configuration
-  const configuredCorsOrigin = process.env.CORS_ORIGIN;
+  const configuredCorsOrigin = "http://localhost:63050";//process.env.CORS_ORIGIN;
 
   app.enableCors({
     origin: configuredCorsOrigin,
