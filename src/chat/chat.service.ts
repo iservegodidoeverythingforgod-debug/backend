@@ -48,47 +48,49 @@ export class ChatService {
       throw new BadRequestException('Message cannot be empty');
     }
 
-    // Check if customer already has an OPEN conversation
-    let conversation = await this.convRepo.findOne({
-      where: {
-        customer_id: customerId,
-        status: ConversationStatus.OPEN,
-      },
-      order: { updated_at: 'DESC' },
-    });
-
-    const now = new Date();
-
-    if (!conversation) {
-      conversation = this.convRepo.create({
-        customer_id: customerId,
-        status: ConversationStatus.OPEN,
-        subject: dto.subject?.trim() || 'General Customer Support',
-        last_message_at: now,
+    return this.convRepo.manager.transaction(async (em) => {
+      // Check if customer already has an OPEN conversation
+      let conversation = await em.findOne(ChatConversation, {
+        where: {
+          customer_id: customerId,
+          status: ConversationStatus.OPEN,
+        },
+        order: { updated_at: 'DESC' },
       });
-      conversation = await this.convRepo.save(conversation);
-    } else {
-      conversation.last_message_at = now;
-      if (dto.subject?.trim()) {
-        conversation.subject = dto.subject.trim();
+
+      const now = new Date();
+
+      if (!conversation) {
+        conversation = em.create(ChatConversation, {
+          customer_id: customerId,
+          status: ConversationStatus.OPEN,
+          subject: dto.subject?.trim() || 'General Customer Support',
+          last_message_at: now,
+        });
+        conversation = await em.save(ChatConversation, conversation);
+      } else {
+        conversation.last_message_at = now;
+        if (dto.subject?.trim()) {
+          conversation.subject = dto.subject.trim();
+        }
+        conversation = await em.save(ChatConversation, conversation);
       }
-      conversation = await this.convRepo.save(conversation);
-    }
 
-    // Create message
-    const message = this.msgRepo.create({
-      conversation_id: conversation.id,
-      sender_type: SenderType.CUSTOMER,
-      sender_id: customerId,
-      message: trimmedMsg,
+      // Create message
+      const message = em.create(ChatMessage, {
+        conversation_id: conversation.id,
+        sender_type: SenderType.CUSTOMER,
+        sender_id: customerId,
+        message: trimmedMsg,
+      });
+
+      const savedMessage = await em.save(ChatMessage, message);
+
+      return {
+        conversation,
+        message: savedMessage,
+      };
     });
-
-    const savedMessage = await this.msgRepo.save(message);
-
-    return {
-      conversation,
-      message: savedMessage,
-    };
   }
 
   /**
@@ -205,11 +207,14 @@ export class ChatService {
       throw new ForbiddenException('You do not have permission to post to this conversation');
     }
 
-    // If closed, reopen upon customer message
-    const now = new Date();
+    // Reject message sending if conversation is closed
     if (conversation.status === ConversationStatus.CLOSED) {
-      conversation.status = ConversationStatus.OPEN;
+      throw new BadRequestException(
+        'This conversation is closed and no longer accepting messages. Please start a new conversation.',
+      );
     }
+
+    const now = new Date();
     conversation.last_message_at = now;
     await this.convRepo.save(conversation);
 
