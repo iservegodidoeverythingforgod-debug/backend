@@ -23,15 +23,21 @@ export class OtpService {
     const pass = this.configService.get<string>('SMTP_PASS');
 
     if (user && pass) {
+      const host = this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com');
+      const port = parseInt(this.configService.get<string>('SMTP_PORT', '465'), 10);
+
       this.transporter = nodemailer.createTransport({
-        service: 'gmail',
+        host,
+        port,
+        secure: port === 465,
+        family: 4, // Explicitly force IPv4 socket connection to prevent ENETUNREACH in containers without IPv6 (e.g. Render)
         auth: {
           user,
           pass,
         },
-      });
+      } as any);
 
-      this.logger.log(`SMTP transporter initialized using Gmail Service.`);
+      this.logger.log(`SMTP transporter initialized using host: ${host}:${port} (forced IPv4).`);
     } else {
       this.logger.warn(
         'SMTP credentials not fully provided. OTPs will be logged to console in Development mode.',
