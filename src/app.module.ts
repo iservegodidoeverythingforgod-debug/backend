@@ -77,6 +77,7 @@ import { RolesGuard } from './common/guards/roles.guard';
           AnimationAsset,
           StoreSetting,
           AuditLog,
+          PendingRegistration,
         ];
 
         // PostgreSQL (Supabase Direct Connection / Remote PostgreSQL)
