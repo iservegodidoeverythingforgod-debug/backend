@@ -6,7 +6,7 @@ uploads/*
 
 .env
 .env.production
-.env.local
 .env.example
+.env.local
 .env.test.example
 *.log

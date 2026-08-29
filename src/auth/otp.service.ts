@@ -7,40 +7,30 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import * as crypto from 'crypto';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
-  private transporter: nodemailer.Transporter | null = null;
+  private resendClient: Resend | null = null;
 
   constructor(private configService: ConfigService) {
-    this.initializeTransporter();
+    this.initializeResend();
   }
 
-  private initializeTransporter() {
-    const user = this.configService.get<string>('SMTP_USER');
-    const pass = this.configService.get<string>('SMTP_PASS');
+  private initializeResend() {
+    const apiKey = this.configService.get<string>('RESEND_API_KEY');
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
 
-    if (user && pass) {
-      const host = this.configService.get<string>('SMTP_HOST', 'smtp.gmail.com');
-      const port = parseInt(this.configService.get<string>('SMTP_PORT', '465'), 10);
-
-      this.transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        family: 4, // Explicitly force IPv4 socket connection to prevent ENETUNREACH in containers without IPv6 (e.g. Render)
-        auth: {
-          user,
-          pass,
-        },
-      } as any);
-
-      this.logger.log(`SMTP transporter initialized using host: ${host}:${port} (forced IPv4).`);
+    if (apiKey && apiKey.trim().length > 0) {
+      this.resendClient = new Resend(apiKey.trim());
+      this.logger.log('Resend HTTPS email client initialized successfully.');
     } else {
+      if (isProduction) {
+        throw new Error('FATAL: RESEND_API_KEY environment variable is missing in production.');
+      }
       this.logger.warn(
-        'SMTP credentials not fully provided. OTPs will be logged to console in Development mode.',
+        'RESEND_API_KEY not configured. OTP verification codes will be logged to the console in Development mode.',
       );
     }
   }
@@ -86,11 +76,13 @@ export class OtpService {
   }
 
   /**
-   * Dispatches OTP registration email with HTML template
+   * Dispatches OTP registration email via Resend API (HTTPS port 443)
    */
   async sendRegistrationEmail(email: string, code: string): Promise<void> {
-    const fromName = this.configService.get<string>('SMTP_FROM_NAME', 'Seed & Herb Store');
-    const fromEmail = this.configService.get<string>('SMTP_FROM_EMAIL', 'noreply@seedstore.com');
+    const fromAddress = this.configService.get<string>(
+      'RESEND_FROM_EMAIL',
+      'Seed & Herb Store <onboarding@resend.dev>',
+    );
 
     const htmlContent = `
       <div style="font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 540px; margin: 0 auto; padding: 32px; background-color: #FAFAF7; border-radius: 16px; border: 1px solid #EAEAE4;">
@@ -112,26 +104,24 @@ export class OtpService {
       </div>
     `;
 
-    if (this.transporter) {
-      try {
-        await this.transporter.sendMail({
-          from: `"${fromName}" <${fromEmail}>`,
-          to: email,
-          subject: `${code} is your Seed & Herb Store verification code`,
-          html: htmlContent,
-        });
-        this.logger.log(`OTP email sent successfully to ${email}`);
-      } catch (err: any) {
-        this.logger.error(`Failed to send email to ${email}: ${err.message}`);
-        // If in development mode without working credentials, log fallback
-        if (this.configService.get<string>('NODE_ENV') !== 'production') {
-          this.logger.log(`[DEV OTP FALLBACK] Code for ${email} is: ${code}`);
-          return;
-        }
-        throw err;
+    if (this.resendClient) {
+      const { data, error } = await this.resendClient.emails.send({
+        from: fromAddress,
+        to: email,
+        subject: `${code} is your Seed & Herb Store verification code`,
+        html: htmlContent,
+      });
+
+      if (error) {
+        this.logger.error(
+          `Resend API error sending email to ${email} [${error.name}]: ${error.message}`,
+        );
+        throw new Error(`Resend email delivery failed: ${error.message}`);
       }
+
+      this.logger.log(`OTP email sent via Resend API to ${email} (Message ID: ${data?.id})`);
     } else {
-      this.logger.log(`[DEV MODE - NO SMTP] Verification Code for ${email}: >>> ${code} <<<`);
+      this.logger.log(`[DEV MODE - NO RESEND API KEY] Verification Code for ${email}: >>> ${code} <<<`);
     }
   }
 }
