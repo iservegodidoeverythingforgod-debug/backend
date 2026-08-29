@@ -7,30 +7,30 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'crypto';
 import * as crypto from 'crypto';
-import { Resend } from 'resend';
+import { BrevoClient } from '@getbrevo/brevo';
 
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
-  private resendClient: Resend | null = null;
+  private brevoClient: BrevoClient | null = null;
 
   constructor(private configService: ConfigService) {
-    this.initializeResend();
+    this.initializeBrevo();
   }
 
-  private initializeResend() {
-    const apiKey = this.configService.get<string>('RESEND_API_KEY');
+  private initializeBrevo() {
+    const apiKey = this.configService.get<string>('BREVO_API_KEY');
     const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
 
     if (apiKey && apiKey.trim().length > 0) {
-      this.resendClient = new Resend(apiKey.trim());
-      this.logger.log('Resend HTTPS email client initialized successfully.');
+      this.brevoClient = new BrevoClient({ apiKey: apiKey.trim() });
+      this.logger.log('Brevo HTTPS email client initialized successfully.');
     } else {
       if (isProduction) {
-        throw new Error('FATAL: RESEND_API_KEY environment variable is missing in production.');
+        throw new Error('FATAL: BREVO_API_KEY environment variable is missing in production.');
       }
       this.logger.warn(
-        'RESEND_API_KEY not configured. OTP verification codes will be logged to the console in Development mode.',
+        'BREVO_API_KEY not configured. OTP verification codes will be logged to the console in Development mode.',
       );
     }
   }
@@ -76,12 +76,16 @@ export class OtpService {
   }
 
   /**
-   * Dispatches OTP registration email via Resend API (HTTPS port 443)
+   * Dispatches OTP registration email via Brevo API (HTTPS port 443)
    */
   async sendRegistrationEmail(email: string, code: string): Promise<void> {
-    const fromAddress = this.configService.get<string>(
-      'RESEND_FROM_EMAIL',
-      'Seed & Herb Store <onboarding@resend.dev>',
+    const senderEmail = this.configService.get<string>(
+      'BREVO_SENDER_EMAIL',
+      'noreply@seedstore.com',
+    );
+    const senderName = this.configService.get<string>(
+      'BREVO_SENDER_NAME',
+      'Seed & Herb Store',
     );
 
     const htmlContent = `
@@ -104,24 +108,24 @@ export class OtpService {
       </div>
     `;
 
-    if (this.resendClient) {
-      const { data, error } = await this.resendClient.emails.send({
-        from: fromAddress,
-        to: email,
-        subject: `${code} is your Seed & Herb Store verification code`,
-        html: htmlContent,
-      });
+    if (this.brevoClient) {
+      try {
+        const response = await this.brevoClient.transactionalEmails.sendTransacEmail({
+          sender: { name: senderName, email: senderEmail },
+          to: [{ email: email.trim() }],
+          subject: `${code} is your Seed & Herb Store verification code`,
+          htmlContent,
+        });
 
-      if (error) {
+        this.logger.log(`OTP email sent via Brevo API to ${email} (Message ID: ${response?.messageId || 'OK'})`);
+      } catch (error: any) {
         this.logger.error(
-          `Resend API error sending email to ${email} [${error.name}]: ${error.message}`,
+          `Brevo API error sending email to ${email}: ${error.message || error}`,
         );
-        throw new Error(`Resend email delivery failed: ${error.message}`);
+        throw new Error(`Brevo email delivery failed: ${error.message || error}`);
       }
-
-      this.logger.log(`OTP email sent via Resend API to ${email} (Message ID: ${data?.id})`);
     } else {
-      this.logger.log(`[DEV MODE - NO RESEND API KEY] Verification Code for ${email}: >>> ${code} <<<`);
+      this.logger.log(`[DEV MODE - NO BREVO API KEY] Verification Code for ${email}: >>> ${code} <<<`);
     }
   }
 }

@@ -1,32 +1,32 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { OtpService } from './otp.service';
-import { Resend } from 'resend';
+import { BrevoClient } from '@getbrevo/brevo';
 
-jest.mock('resend');
+jest.mock('@getbrevo/brevo');
 
 describe('OtpService', () => {
   let service: OtpService;
   let mockConfigService: any;
-  let mockResendSend: jest.Mock;
+  let mockBrevoSend: jest.Mock;
 
   beforeEach(async () => {
-    mockResendSend = jest.fn().mockResolvedValue({
-      data: { id: 'resend_msg_12345' },
-      error: null,
+    mockBrevoSend = jest.fn().mockResolvedValue({
+      messageId: '<brevo_msg_12345@smtp-relay.brevo.com>',
     });
 
-    (Resend as unknown as jest.Mock).mockImplementation(() => ({
-      emails: {
-        send: mockResendSend,
+    (BrevoClient as unknown as jest.Mock).mockImplementation(() => ({
+      transactionalEmails: {
+        sendTransacEmail: mockBrevoSend,
       },
     }));
 
     mockConfigService = {
       get: jest.fn((key: string, defaultVal?: string) => {
         if (key === 'NODE_ENV') return 'development';
-        if (key === 'RESEND_API_KEY') return 're_test_key_12345';
-        if (key === 'RESEND_FROM_EMAIL') return 'Seed Store <onboarding@resend.dev>';
+        if (key === 'BREVO_API_KEY') return 'xkeysib_test_key_12345';
+        if (key === 'BREVO_SENDER_EMAIL') return 'verified-sender@gmail.com';
+        if (key === 'BREVO_SENDER_NAME') return 'Seed & Herb Store';
         if (key === 'OTP_HMAC_SECRET') return 'test_hmac_secret_key';
         return defaultVal;
       }),
@@ -69,49 +69,46 @@ describe('OtpService', () => {
   });
 
   describe('sendRegistrationEmail', () => {
-    it('should invoke Resend emails.send with correct recipient, from address, and OTP code', async () => {
+    it('should invoke Brevo sendTransacEmail with correct sender, recipient, and OTP code', async () => {
       const email = 'customer@example.com';
       const code = '543210';
 
       await service.sendRegistrationEmail(email, code);
 
-      expect(mockResendSend).toHaveBeenCalledWith(
+      expect(mockBrevoSend).toHaveBeenCalledWith(
         expect.objectContaining({
-          from: 'Seed Store <onboarding@resend.dev>',
-          to: 'customer@example.com',
+          sender: {
+            name: 'Seed & Herb Store',
+            email: 'verified-sender@gmail.com',
+          },
+          to: [{ email: 'customer@example.com' }],
           subject: `${code} is your Seed & Herb Store verification code`,
-          html: expect.stringContaining(code),
+          htmlContent: expect.stringContaining(code),
         }),
       );
     });
 
-    it('should throw an error if the Resend API returns an error object', async () => {
-      mockResendSend.mockResolvedValue({
-        data: null,
-        error: {
-          name: 'validation_error',
-          message: 'The recipient address is invalid',
-        },
-      });
+    it('should throw an error if the Brevo API rejects the request', async () => {
+      mockBrevoSend.mockRejectedValue(new Error('Invalid sender address'));
 
       await expect(
         service.sendRegistrationEmail('invalid@domain', '123456'),
-      ).rejects.toThrow('Resend email delivery failed: The recipient address is invalid');
+      ).rejects.toThrow('Brevo email delivery failed: Invalid sender address');
     });
   });
 
   describe('production startup validation', () => {
-    it('should fail fast with a fatal error if RESEND_API_KEY is missing in production', () => {
+    it('should fail fast with a fatal error if BREVO_API_KEY is missing in production', () => {
       const prodConfigService = {
         get: jest.fn((key: string) => {
           if (key === 'NODE_ENV') return 'production';
-          if (key === 'RESEND_API_KEY') return undefined;
+          if (key === 'BREVO_API_KEY') return undefined;
           return undefined;
         }),
       };
 
       expect(() => new OtpService(prodConfigService as any)).toThrow(
-        'FATAL: RESEND_API_KEY environment variable is missing in production.',
+        'FATAL: BREVO_API_KEY environment variable is missing in production.',
       );
     });
   });
