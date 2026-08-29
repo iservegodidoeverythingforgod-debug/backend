@@ -1,5 +1,7 @@
 import {
   Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
   UnauthorizedException,
   ConflictException,
   NotFoundException,
@@ -14,6 +16,7 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { User } from '../database/entities/user.entity';
 import { RefreshToken } from '../database/entities/refresh-token.entity';
+import { PendingRegistration } from '../database/entities/pending-registration.entity';
 import { Role } from '../common/enums';
 import {
   RegisterDto,
@@ -28,14 +31,22 @@ import { OtpService } from './otp.service';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AuthService.name);
+  private cleanupInterval: NodeJS.Timeout | null = null;
+
+  // Security Configuration Constants
+  private readonly OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes validity
+  private readonly RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown
+  private readonly MAX_VERIFY_ATTEMPTS = 5; // Max 5 wrong guesses before invalidation
 
   constructor(
     @InjectRepository(User)
     private userRepository: Repository<User>,
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
+    @InjectRepository(PendingRegistration)
+    private pendingRegistrationRepository: Repository<PendingRegistration>,
     private jwtService: JwtService,
     private configService: ConfigService,
     private otpService: OtpService,
@@ -107,82 +118,182 @@ export class AuthService {
   }
 
   /**
-   * Register a new customer with OTP verification
+   * Initiate customer registration with OTP verification without writing to users table
    */
   async register(dto: RegisterDto) {
     const normalizedEmail = dto.email.toLowerCase().trim();
-    const existing = await this.userRepository.findOne({
+
+    // 1. Check if email is already registered to an existing active/verified user
+    const existingUser = await this.userRepository.findOne({
       where: { email: normalizedEmail },
     });
 
-    if (existing) {
-      if (!existing.is_active) {
+    if (existingUser) {
+      if (!existingUser.is_active) {
         throw new UnauthorizedException('This account has been deactivated.');
-      }
-      // If account exists but has not been verified yet, re-send OTP
-      if (!existing.is_verified) {
-        await this.otpService.sendOtp(existing.email, 'REGISTRATION');
-        return {
-          requiresVerification: true,
-          email: existing.email,
-          message: 'Account pending verification. A new verification code has been dispatched.',
-        };
       }
       throw new ConflictException('An account with this email already exists.');
     }
 
+    // 2. Lazy cleanup: purge any expired pending registration for this email
+    await this.pendingRegistrationRepository.delete({
+      email: normalizedEmail,
+      otp_expires_at: LessThan(new Date()),
+    });
+
+    // 3. Check if an active unexpired pending registration exists for anti-spam cooldown
+    const existingPending = await this.pendingRegistrationRepository.findOne({
+      where: { email: normalizedEmail },
+    });
+
+    if (existingPending && existingPending.otp_expires_at > new Date()) {
+      const timeSinceLast = Date.now() - new Date(existingPending.updated_at).getTime();
+      if (timeSinceLast < this.RESEND_COOLDOWN_MS) {
+        const remainingSec = Math.ceil((this.RESEND_COOLDOWN_MS - timeSinceLast) / 1000);
+        throw new BadRequestException(
+          `Please wait ${remainingSec} seconds before requesting a new verification code.`,
+        );
+      }
+    }
+
+    // 4. Hash password with bcrypt
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(dto.password, salt);
 
-    const user = this.userRepository.create({
-      email: normalizedEmail,
-      password_hash,
-      full_name: dto.full_name,
-      phone: dto.phone,
-      address: dto.address,
-      role: Role.CUSTOMER,
-      is_active: true,
-      is_verified: false,
-    });
+    // 5. Generate secure 6-digit numeric OTP and compute HMAC-SHA256 hash
+    const rawOtp = this.otpService.generateSecureCode();
+    const hashedOtp = this.otpService.hashOtp(rawOtp);
+    const otpExpiresAt = new Date(Date.now() + this.OTP_TTL_MS);
 
-    const savedUser = await this.userRepository.save(user);
+    // 6. Save or update pending registration record
+    let pendingRecord: PendingRegistration;
+    if (existingPending) {
+      existingPending.full_name = dto.full_name.trim();
+      existingPending.password_hash = password_hash;
+      existingPending.phone = dto.phone?.trim();
+      existingPending.address = dto.address?.trim();
+      existingPending.otp_code = hashedOtp;
+      existingPending.otp_expires_at = otpExpiresAt;
+      existingPending.attempts = 0;
+      existingPending.updated_at = new Date();
+      pendingRecord = await this.pendingRegistrationRepository.save(existingPending);
+    } else {
+      const pending = this.pendingRegistrationRepository.create({
+        email: normalizedEmail,
+        full_name: dto.full_name.trim(),
+        password_hash,
+        phone: dto.phone?.trim(),
+        address: dto.address?.trim(),
+        otp_code: hashedOtp,
+        otp_expires_at: otpExpiresAt,
+        attempts: 0,
+      });
+      pendingRecord = await this.pendingRegistrationRepository.save(pending);
+    }
 
-    // Send 6-digit OTP
-    await this.otpService.sendOtp(savedUser.email, 'REGISTRATION');
+    // 7. Dispatch OTP email with guaranteed rollback on failure
+    try {
+      await this.otpService.sendRegistrationEmail(normalizedEmail, rawOtp);
+    } catch (err: any) {
+      // Rollback pending record if email dispatch fails
+      await this.pendingRegistrationRepository.delete({ id: pendingRecord.id });
+      this.logger.error(`Failed to send OTP verification email to ${normalizedEmail}: ${err.message}`);
+      throw new BadRequestException(
+        'Unable to dispatch verification email. Please verify your email address and try again.',
+      );
+    }
 
     return {
       requiresVerification: true,
-      email: savedUser.email,
-      message: 'Registration successful. Please verify your email with the 6-digit verification code.',
+      email: normalizedEmail,
+      message:
+        'Registration initiated. Please verify your email with the 6-digit verification code.',
     };
   }
 
   /**
-   * Verify 6-digit OTP and activate account
+   * Verify 6-digit OTP against pending_registrations and atomically create user record
    */
   async verifyOtpAndActivate(dto: VerifyOtpDto) {
     const email = dto.email.toLowerCase().trim();
-    const user = await this.userRepository.findOne({ where: { email } });
 
-    if (!user) {
-      throw new NotFoundException('No account found for this email.');
+    // 1. Lazy cleanup of expired record
+    await this.pendingRegistrationRepository.delete({
+      email,
+      otp_expires_at: LessThan(new Date()),
+    });
+
+    // 2. Fetch pending registration record
+    const pending = await this.pendingRegistrationRepository.findOne({
+      where: { email },
+    });
+
+    if (!pending) {
+      throw new BadRequestException(
+        'Verification code has expired or registration was not initiated. Please register again.',
+      );
     }
 
-    if (!user.is_active) {
-      throw new UnauthorizedException('Account has been deactivated.');
+    // 3. Enforce maximum brute-force verification attempt limit (5 attempts)
+    if (pending.attempts >= this.MAX_VERIFY_ATTEMPTS) {
+      await this.pendingRegistrationRepository.delete({ id: pending.id });
+      throw new UnauthorizedException(
+        'Too many failed verification attempts. This registration has been invalidated. Please register again.',
+      );
     }
 
-    // Verify OTP
-    await this.otpService.verifyOtp(email, dto.code);
+    // 4. Verify OTP using constant-time HMAC-SHA256 comparison
+    const isValid = this.otpService.verifyOtpHash(dto.code, pending.otp_code);
 
-    // Activate user
-    user.is_verified = true;
-    user.verified_at = new Date();
-    await this.userRepository.save(user);
+    if (!isValid) {
+      pending.attempts += 1;
+      if (pending.attempts >= this.MAX_VERIFY_ATTEMPTS) {
+        await this.pendingRegistrationRepository.delete({ id: pending.id });
+        throw new UnauthorizedException(
+          'Too many failed verification attempts. This registration has been invalidated. Please register again.',
+        );
+      }
+      await this.pendingRegistrationRepository.save(pending);
+      const remaining = this.MAX_VERIFY_ATTEMPTS - pending.attempts;
+      throw new BadRequestException(
+        `Invalid verification code. ${remaining} attempt(s) remaining.`,
+      );
+    }
 
-    // Generate JWT tokens
-    const tokens = await this.generateTokens(user);
-    const { password_hash: _, ...safeUser } = user;
+    // 5. Execute atomic transaction: create real User, delete PendingRegistration, issue tokens
+    const { safeUser, tokens } = await this.userRepository.manager.transaction(
+      async (manager) => {
+        // Double-check email is not claimed by another completed registration in the interim
+        const existingCheck = await manager.findOne(User, { where: { email } });
+        if (existingCheck) {
+          await manager.delete(PendingRegistration, { id: pending.id });
+          throw new ConflictException('An account with this email already exists.');
+        }
+
+        const newUser = manager.create(User, {
+          email: pending.email,
+          password_hash: pending.password_hash,
+          full_name: pending.full_name,
+          phone: pending.phone,
+          address: pending.address,
+          role: Role.CUSTOMER,
+          is_active: true,
+          is_verified: true,
+          verified_at: new Date(),
+        });
+
+        const savedUser = await manager.save(newUser);
+
+        // Delete pending registration
+        await manager.delete(PendingRegistration, { id: pending.id });
+
+        // Generate JWT tokens
+        const tokens = await this.generateTokens(savedUser);
+        const { password_hash: _, ...safeUser } = savedUser;
+
+        return { safeUser, tokens };
+      },
+    );
 
     return {
       user: safeUser,
@@ -191,21 +302,98 @@ export class AuthService {
   }
 
   /**
-   * Resend Verification OTP
+   * Resend Verification OTP for active pending registration
    */
   async resendVerificationOtp(dto: ResendOtpDto) {
     const email = dto.email.toLowerCase().trim();
+
+    // 1. Check if account is already verified
     const user = await this.userRepository.findOne({ where: { email } });
-
-    if (!user) {
-      throw new NotFoundException('No account found with this email.');
+    if (user && user.is_verified) {
+      throw new BadRequestException(
+        'This account is already verified. Please log in directly.',
+      );
     }
 
-    if (user.is_verified) {
-      throw new BadRequestException('This account is already verified. Please log in directly.');
+    // 2. Lazy cleanup of expired record
+    await this.pendingRegistrationRepository.delete({
+      email,
+      otp_expires_at: LessThan(new Date()),
+    });
+
+    // 3. Find pending registration record
+    const pending = await this.pendingRegistrationRepository.findOne({
+      where: { email },
+    });
+
+    if (!pending) {
+      throw new NotFoundException(
+        'No pending registration found for this email. Please register first.',
+      );
     }
 
-    return this.otpService.sendOtp(email, 'REGISTRATION');
+    // 4. Enforce 60-second cooldown
+    const timeSinceLast = Date.now() - new Date(pending.updated_at).getTime();
+    if (timeSinceLast < this.RESEND_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((this.RESEND_COOLDOWN_MS - timeSinceLast) / 1000);
+      throw new BadRequestException(
+        `Please wait ${remainingSec} seconds before requesting a new verification code.`,
+      );
+    }
+
+    // 5. Generate fresh OTP and update pending record
+    const rawOtp = this.otpService.generateSecureCode();
+    const hashedOtp = this.otpService.hashOtp(rawOtp);
+    pending.otp_code = hashedOtp;
+    pending.otp_expires_at = new Date(Date.now() + this.OTP_TTL_MS);
+    pending.attempts = 0;
+    pending.updated_at = new Date();
+    await this.pendingRegistrationRepository.save(pending);
+
+    // 6. Send email
+    await this.otpService.sendRegistrationEmail(email, rawOtp);
+
+    return {
+      success: true,
+      cooldownSeconds: 60,
+      message: 'A new verification code has been dispatched.',
+    };
+  }
+
+  onModuleInit() {
+    // Purge expired pending registrations every 15 minutes
+    this.cleanupInterval = setInterval(
+      () => this.cleanupExpiredPendingRegistrations(),
+      15 * 60 * 1000,
+    );
+    if (this.cleanupInterval.unref) {
+      this.cleanupInterval.unref();
+    }
+  }
+
+  onModuleDestroy() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
+  }
+
+  /**
+   * Background Purge: Purges expired pending registrations
+   */
+  async cleanupExpiredPendingRegistrations() {
+    try {
+      const result = await this.pendingRegistrationRepository.delete({
+        otp_expires_at: LessThan(new Date()),
+      });
+      if (result.affected && result.affected > 0) {
+        this.logger.log(`Purged ${result.affected} expired pending registration(s).`);
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to purge expired pending registrations: ${err.message}`,
+      );
+    }
   }
 
   /**
@@ -231,17 +419,6 @@ export class AuthService {
     const isMatch = await bcrypt.compare(dto.password, user.password_hash);
     if (!isMatch) {
       throw new UnauthorizedException('Invalid email or password credentials');
-    }
-
-    // If customer is not verified yet, send new OTP and require verification
-    if (!user.is_verified && user.role !== Role.ADMIN) {
-      await this.otpService.sendOtp(user.email, 'REGISTRATION');
-      throw new UnauthorizedException({
-        statusCode: 401,
-        requiresVerification: true,
-        email: user.email,
-        message: 'Account not verified. A new 6-digit verification code has been sent to your email.',
-      });
     }
 
     const tokens = await this.generateTokens(user);

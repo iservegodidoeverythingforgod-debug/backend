@@ -34,6 +34,7 @@ import {
   AnimationAsset,
   StoreSetting,
   AuditLog,
+  PendingRegistration,
 } from './database/entities';
 
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';

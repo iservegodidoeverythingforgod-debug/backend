@@ -9,11 +9,12 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { OtpService } from './otp.service';
 import { User } from '../database/entities/user.entity';
 import { RefreshToken } from '../database/entities/refresh-token.entity';
+import { PendingRegistration } from '../database/entities/pending-registration.entity';
 import { SupabaseStorageModule } from '../common/storage/supabase-storage.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, RefreshToken]),
+    TypeOrmModule.forFeature([User, RefreshToken, PendingRegistration]),
     SupabaseStorageModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({

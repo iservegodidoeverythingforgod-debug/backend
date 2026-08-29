@@ -6,25 +6,13 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomInt } from 'crypto';
+import * as crypto from 'crypto';
 import * as nodemailer from 'nodemailer';
-
-interface OtpRecord {
-  code: string;
-  expiresAt: number;
-  attempts: number;
-  lastSentAt: number;
-}
 
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
-  private readonly otpStore = new Map<string, OtpRecord>();
   private transporter: nodemailer.Transporter | null = null;
-
-  // Security Configuration Constants
-  private readonly OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes validity
-  private readonly RESEND_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown
-  private readonly MAX_VERIFY_ATTEMPTS = 5; // Max 5 wrong guesses before invalidation
 
   constructor(private configService: ConfigService) {
     this.initializeTransporter();
@@ -36,10 +24,10 @@ export class OtpService {
 
     if (user && pass) {
       this.transporter = nodemailer.createTransport({
-        service: 'gmail', // ใส่คำนี้คำเดียวแทนการระบุ Host และ Port
+        service: 'gmail',
         auth: {
           user,
-          pass, 
+          pass,
         },
       });
 
@@ -51,91 +39,50 @@ export class OtpService {
     }
   }
 
-
   /**
    * Generates a cryptographically secure 6-digit numeric OTP
    */
-  private generateSecureCode(): string {
+  generateSecureCode(): string {
     return randomInt(100000, 1000000).toString();
   }
 
   /**
-   * Dispatches an OTP to the given email with cooldown and anti-spam enforcement
+   * Hashes 6-digit numeric OTP using HMAC-SHA256 with required environment secret
    */
-  async sendOtp(
-    email: string,
-    purpose: 'REGISTRATION' | 'PASSWORD_RESET' = 'REGISTRATION',
-  ): Promise<{ success: boolean; cooldownSeconds: number }> {
-    const normalizedEmail = email.toLowerCase().trim();
-    const now = Date.now();
-    const existing = this.otpStore.get(normalizedEmail);
+  hashOtp(code: string): string {
+    const isProduction = this.configService.get<string>('NODE_ENV') === 'production';
+    const secret = this.configService.get<string>('OTP_HMAC_SECRET');
 
-    // Enforce 60-second resend cooldown
-    if (existing && now - existing.lastSentAt < this.RESEND_COOLDOWN_MS) {
-      const remainingSec = Math.ceil((this.RESEND_COOLDOWN_MS - (now - existing.lastSentAt)) / 1000);
-      throw new BadRequestException(
-        `Please wait ${remainingSec} seconds before requesting a new verification code.`,
-      );
+    if (!secret) {
+      if (isProduction) {
+        throw new Error('FATAL: OTP_HMAC_SECRET environment variable is missing in production.');
+      }
     }
 
-    const code = this.generateSecureCode();
-    this.otpStore.set(normalizedEmail, {
-      code,
-      expiresAt: now + this.OTP_TTL_MS,
-      attempts: 0,
-      lastSentAt: now,
-    });
-
-    await this.dispatchEmail(normalizedEmail, code, purpose);
-
-    return {
-      success: true,
-      cooldownSeconds: 60,
-    };
+    const key = secret || 'dev_otp_hmac_secret_key_seed_store_2026';
+    return crypto.createHmac('sha256', key).update(code.trim()).digest('hex');
   }
 
   /**
-   * Verifies the submitted OTP against the store with brute-force attempt tracking
+   * Constant-time timing-safe comparison of submitted OTP code against stored HMAC-SHA256 hash
    */
-  async verifyOtp(email: string, code: string): Promise<boolean> {
-    const normalizedEmail = email.toLowerCase().trim();
-    const record = this.otpStore.get(normalizedEmail);
-
-    if (!record) {
-      throw new BadRequestException('Verification code has expired or was not requested. Please request a new one.');
+  verifyOtpHash(code: string, hashedCode: string): boolean {
+    if (!code || !hashedCode) return false;
+    const computed = this.hashOtp(code);
+    try {
+      const bufA = Buffer.from(computed, 'hex');
+      const bufB = Buffer.from(hashedCode, 'hex');
+      if (bufA.length !== bufB.length) return false;
+      return crypto.timingSafeEqual(bufA, bufB);
+    } catch {
+      return false;
     }
-
-    // Check expiration
-    if (Date.now() > record.expiresAt) {
-      this.otpStore.delete(normalizedEmail);
-      throw new BadRequestException('Verification code has expired. Please request a new one.');
-    }
-
-    // Check attempt threshold
-    if (record.attempts >= this.MAX_VERIFY_ATTEMPTS) {
-      this.otpStore.delete(normalizedEmail);
-      throw new UnauthorizedException(
-        'Too many failed attempts. This code has been invalidated. Please request a new one.',
-      );
-    }
-
-    if (record.code !== code.trim()) {
-      record.attempts += 1;
-      const remaining = this.MAX_VERIFY_ATTEMPTS - record.attempts;
-      throw new BadRequestException(
-        `Invalid verification code. ${remaining} attempt(s) remaining.`,
-      );
-    }
-
-    // Code verified: consume and delete from store
-    this.otpStore.delete(normalizedEmail);
-    return true;
   }
 
   /**
-   * HTML Email Dispatcher
+   * Dispatches OTP registration email with HTML template
    */
-  private async dispatchEmail(email: string, code: string, purpose: string) {
+  async sendRegistrationEmail(email: string, code: string): Promise<void> {
     const fromName = this.configService.get<string>('SMTP_FROM_NAME', 'Seed & Herb Store');
     const fromEmail = this.configService.get<string>('SMTP_FROM_EMAIL', 'noreply@seedstore.com');
 
@@ -153,7 +100,7 @@ export class OtpService {
             ${code}
           </div>
           <p style="color: #A0AEC0; font-size: 12px; margin: 0;">
-            This code will expire in <strong>5 minutes</strong>. If you did not request this code, you can safely ignore this email.
+            This code will expire in <strong>10 minutes</strong>. If you did not request this code, you can safely ignore this email.
           </p>
         </div>
       </div>
@@ -170,7 +117,12 @@ export class OtpService {
         this.logger.log(`OTP email sent successfully to ${email}`);
       } catch (err: any) {
         this.logger.error(`Failed to send email to ${email}: ${err.message}`);
-        this.logger.log(`[DEV OTP FALLBACK] Code for ${email} is: ${code}`);
+        // If in development mode without working credentials, log fallback
+        if (this.configService.get<string>('NODE_ENV') !== 'production') {
+          this.logger.log(`[DEV OTP FALLBACK] Code for ${email} is: ${code}`);
+          return;
+        }
+        throw err;
       }
     } else {
       this.logger.log(`[DEV MODE - NO SMTP] Verification Code for ${email}: >>> ${code} <<<`);
