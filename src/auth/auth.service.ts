@@ -11,7 +11,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, LessThan } from 'typeorm';
+import { Repository, LessThan, EntityManager } from 'typeorm';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { User } from '../database/entities/user.entity';
@@ -63,7 +63,10 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   /**
    * Generate short-lived Access Token (15m default) and long-lived Refresh Token (7d default)
    */
-  private async generateTokens(user: User): Promise<{
+  private async generateTokens(
+    user: User,
+    manager?: EntityManager,
+  ): Promise<{
     accessToken: string;
     refreshToken: string;
     expiresIn: number;
@@ -101,14 +104,25 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
 
     const tokenHash = this.hashToken(refreshJwt);
 
-    const refreshTokenEntity = this.refreshTokenRepository.create({
-      user_id: user.id,
-      token_hash: tokenHash,
-      expires_at: expiresAt,
-      is_revoked: false,
-    });
+    const refreshTokenEntity = manager
+      ? manager.create(RefreshToken, {
+          user_id: user.id,
+          token_hash: tokenHash,
+          expires_at: expiresAt,
+          is_revoked: false,
+        })
+      : this.refreshTokenRepository.create({
+          user_id: user.id,
+          token_hash: tokenHash,
+          expires_at: expiresAt,
+          is_revoked: false,
+        });
 
-    await this.refreshTokenRepository.save(refreshTokenEntity);
+    if (manager) {
+      await manager.save(RefreshToken, refreshTokenEntity);
+    } else {
+      await this.refreshTokenRepository.save(refreshTokenEntity);
+    }
 
     return {
       accessToken,
@@ -287,8 +301,8 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
         // Delete pending registration
         await manager.delete(PendingRegistration, { id: pending.id });
 
-        // Generate JWT tokens
-        const tokens = await this.generateTokens(savedUser);
+        // Generate JWT tokens within the same transaction to maintain FK integrity
+        const tokens = await this.generateTokens(savedUser, manager);
         const { password_hash: _, ...safeUser } = savedUser;
 
         return { safeUser, tokens };

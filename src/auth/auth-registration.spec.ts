@@ -257,7 +257,17 @@ describe('AuthService - Verify-Then-Create Registration Flow', () => {
         id: 'pending-uuid-1',
       });
 
-      // 4. Returns user and tokens
+      // 4. Saved RefreshToken entity via the transactional EntityManager
+      expect(mockEntityManager.save).toHaveBeenCalledWith(
+        RefreshToken,
+        expect.objectContaining({
+          user_id: 'user-uuid-1',
+          is_revoked: false,
+        }),
+      );
+      expect(mockRefreshTokenRepo.save).not.toHaveBeenCalled();
+
+      // 5. Returns user and tokens
       expect(result).toHaveProperty('user');
       expect(result.user).toHaveProperty('email', 'verify@seedstore.com');
       expect(result).toHaveProperty('accessToken');
