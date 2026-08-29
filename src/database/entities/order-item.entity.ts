@@ -5,8 +5,8 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { Order } from './order.entity';
-import { Product } from './product.entity';
+import type { Order } from './order.entity';
+import type { Product } from './product.entity';
 
 @Entity('order_items')
 export class OrderItem {
@@ -16,14 +16,14 @@ export class OrderItem {
   @Column()
   order_id: string;
 
-  @ManyToOne(() => Order, (order) => order.items, { onDelete: 'CASCADE' })
+  @ManyToOne('Order', 'items', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'order_id' })
   order: Order;
 
   @Column({ type: 'uuid', nullable: true })
   product_id: string | null;
 
-  @ManyToOne(() => Product, (product) => product.order_items, {
+  @ManyToOne('Product', 'order_items', {
     onDelete: 'SET NULL',
     nullable: true,
   })

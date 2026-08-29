@@ -32,9 +32,7 @@ export class ProductsService {
     const qb = this.productRepository
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.growth_rule', 'growth_rule')
-      .leftJoinAndSelect('product.reviews', 'reviews')
-      .leftJoinAndSelect('reviews.user', 'reviewUser');
+      .leftJoinAndSelect('product.growth_rule', 'growth_rule');
 
     if (!params?.includeInactive) {
       qb.andWhere('product.is_active = :active', { active: true });

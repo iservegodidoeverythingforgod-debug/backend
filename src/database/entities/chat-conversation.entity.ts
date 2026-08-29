@@ -8,8 +8,8 @@ import {
   OneToMany,
   JoinColumn,
 } from 'typeorm';
-import { User } from './user.entity';
-import { ChatMessage } from './chat-message.entity';
+import type { User } from './user.entity';
+import type { ChatMessage } from './chat-message.entity';
 
 export enum ConversationStatus {
   OPEN = 'OPEN',
@@ -24,7 +24,7 @@ export class ChatConversation {
   @Column({ type: 'uuid' })
   customer_id: string;
 
-  @ManyToOne(() => User, (user) => user.conversations, { onDelete: 'CASCADE' })
+  @ManyToOne('User', 'conversations', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'customer_id' })
   customer: User;
 
@@ -46,6 +46,6 @@ export class ChatConversation {
   @UpdateDateColumn()
   updated_at: Date;
 
-  @OneToMany(() => ChatMessage, (message) => message.conversation)
+  @OneToMany('ChatMessage', 'conversation')
   messages: ChatMessage[];
 }

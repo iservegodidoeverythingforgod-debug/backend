@@ -89,25 +89,41 @@ export class ReportsService {
    * Customer Satisfaction & Review Analysis
    */
   async getCustomerSatisfaction() {
-    const reviews = await this.reviewRepository.find();
-    const totalReviews = reviews.length;
+    const stats = await this.reviewRepository
+      .createQueryBuilder('r')
+      .select('COUNT(r.id)', 'total')
+      .addSelect('AVG(r.rating)', 'avg')
+      .getRawOne();
+
+    const totalReviews = parseInt(stats?.total || '0', 10);
 
     if (totalReviews === 0) {
       return {
         totalReviews: 0,
+        total_reviews: 0,
         averageRating: 5.0,
+        average_rating: 5.0,
         ratingDistribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
+        rating_distribution: { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 },
         satisfactionPercentage: 100,
+        satisfaction_percentage: 100,
       };
     }
 
-    const ratingSum = reviews.reduce((acc, r) => acc + r.rating, 0);
-    const averageRating = Math.round((ratingSum / totalReviews) * 10) / 10;
+    const averageRating = Math.round(parseFloat(stats?.avg || '5') * 10) / 10;
 
-    const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-    reviews.forEach((r) => {
-      if (distribution[r.rating] !== undefined) {
-        distribution[r.rating]++;
+    const distributionRaw = await this.reviewRepository
+      .createQueryBuilder('r')
+      .select('r.rating', 'rating')
+      .addSelect('COUNT(r.id)', 'count')
+      .groupBy('r.rating')
+      .getRawMany();
+
+    const distribution: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    distributionRaw.forEach((row) => {
+      const rating = parseInt(row.rating, 10);
+      if (distribution[rating] !== undefined) {
+        distribution[rating] = parseInt(row.count, 10);
       }
     });
 

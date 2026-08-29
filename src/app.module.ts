@@ -93,8 +93,10 @@ import { RolesGuard } from './common/guards/roles.guard';
             synchronize: false,
             ssl: isSupabaseOrRemote ? { rejectUnauthorized: false } : false,
             extra: {
-              max: 10,
-              min: 2,
+              max: config.get<string>('DB_POOL_MAX')
+                ? parseInt(config.get<string>('DB_POOL_MAX')!, 10)
+                : 4,
+              min: 1,
               connectionTimeoutMillis: 10000,
               idleTimeoutMillis: 30000,
             },

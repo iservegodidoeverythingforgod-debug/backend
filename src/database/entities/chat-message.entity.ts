@@ -6,8 +6,8 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { ChatConversation } from './chat-conversation.entity';
-import { User } from './user.entity';
+import type { ChatConversation } from './chat-conversation.entity';
+import type { User } from './user.entity';
 
 export enum SenderType {
   CUSTOMER = 'CUSTOMER',
@@ -22,7 +22,7 @@ export class ChatMessage {
   @Column({ type: 'uuid' })
   conversation_id: string;
 
-  @ManyToOne(() => ChatConversation, (conv) => conv.messages, { onDelete: 'CASCADE' })
+  @ManyToOne('ChatConversation', 'messages', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'conversation_id' })
   conversation: ChatConversation;
 
@@ -35,7 +35,7 @@ export class ChatMessage {
   @Column({ type: 'uuid' })
   sender_id: string;
 
-  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @ManyToOne('User', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'sender_id' })
   sender: User;
 

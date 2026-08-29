@@ -98,26 +98,47 @@ export class ChatService {
     const conversations = await this.convRepo.find({
       where: { customer_id: customerId },
       order: { last_message_at: 'DESC' },
-      relations: ['messages', 'customer'],
     });
 
-    // Decorate each conversation with unreadCount and lastMessage
+    if (conversations.length === 0) return [];
+    const convIds = conversations.map((c) => c.id);
+
+    // 1. Unread counts from admin via SQL GROUP BY
+    const unreadRaw = await this.msgRepo
+      .createQueryBuilder('msg')
+      .select('msg.conversation_id', 'convId')
+      .addSelect('COUNT(msg.id)', 'count')
+      .where('msg.conversation_id IN (:...convIds)', { convIds })
+      .andWhere('msg.sender_type = :senderType', { senderType: SenderType.ADMIN })
+      .andWhere('msg.read_at IS NULL')
+      .groupBy('msg.conversation_id')
+      .getRawMany();
+
+    const unreadMap = new Map<string, number>(
+      unreadRaw.map((r) => [r.convId, parseInt(r.count, 10)]),
+    );
+
+    // 2. Fetch latest messages for each conversation
+    const messages = await this.msgRepo
+      .createQueryBuilder('msg')
+      .where('msg.conversation_id IN (:...convIds)', { convIds })
+      .orderBy('msg.created_at', 'DESC')
+      .getMany();
+
+    const lastMessageMap = new Map<string, ChatMessage>();
+    for (const m of messages) {
+      if (!lastMessageMap.has(m.conversation_id)) {
+        lastMessageMap.set(m.conversation_id, m);
+      }
+    }
+
     return conversations.map((conv) => {
-      const sortedMessages = (conv.messages || []).sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      );
-
-      const unreadCount = sortedMessages.filter(
-        (m) => m.sender_type === SenderType.ADMIN && !m.read_at,
-      ).length;
-
-      const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
-
-      const { customer, ...safeConv } = conv;
+      const { ...safeConv } = conv;
       return {
         ...safeConv,
-        unread_count: unreadCount,
-        last_message: lastMessage,
+        unread_count: unreadMap.get(conv.id) || 0,
+        last_message: lastMessageMap.get(conv.id) || null,
+        messages: [],
       };
     });
   }
@@ -262,7 +283,6 @@ export class ChatService {
     const qb = this.convRepo
       .createQueryBuilder('conv')
       .leftJoinAndSelect('conv.customer', 'customer')
-      .leftJoinAndSelect('conv.messages', 'messages')
       .orderBy('conv.last_message_at', 'DESC');
 
     if (status) {
@@ -270,18 +290,39 @@ export class ChatService {
     }
 
     const conversations = await qb.getMany();
+    if (conversations.length === 0) return [];
+    const convIds = conversations.map((c) => c.id);
+
+    // 1. Unread counts from customer via SQL GROUP BY
+    const unreadRaw = await this.msgRepo
+      .createQueryBuilder('msg')
+      .select('msg.conversation_id', 'convId')
+      .addSelect('COUNT(msg.id)', 'count')
+      .where('msg.conversation_id IN (:...convIds)', { convIds })
+      .andWhere('msg.sender_type = :senderType', { senderType: SenderType.CUSTOMER })
+      .andWhere('msg.read_at IS NULL')
+      .groupBy('msg.conversation_id')
+      .getRawMany();
+
+    const unreadMap = new Map<string, number>(
+      unreadRaw.map((r) => [r.convId, parseInt(r.count, 10)]),
+    );
+
+    // 2. Fetch latest messages for each conversation
+    const messages = await this.msgRepo
+      .createQueryBuilder('msg')
+      .where('msg.conversation_id IN (:...convIds)', { convIds })
+      .orderBy('msg.created_at', 'DESC')
+      .getMany();
+
+    const lastMessageMap = new Map<string, ChatMessage>();
+    for (const m of messages) {
+      if (!lastMessageMap.has(m.conversation_id)) {
+        lastMessageMap.set(m.conversation_id, m);
+      }
+    }
 
     return conversations.map((conv) => {
-      const sortedMessages = (conv.messages || []).sort(
-        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
-      );
-
-      const unreadCount = sortedMessages.filter(
-        (m) => m.sender_type === SenderType.CUSTOMER && !m.read_at,
-      ).length;
-
-      const lastMessage = sortedMessages.length > 0 ? sortedMessages[sortedMessages.length - 1] : null;
-
       return {
         id: conv.id,
         customer_id: conv.customer_id,
@@ -293,8 +334,9 @@ export class ChatService {
         last_message_at: conv.last_message_at,
         created_at: conv.created_at,
         updated_at: conv.updated_at,
-        unread_count: unreadCount,
-        last_message: lastMessage,
+        unread_count: unreadMap.get(conv.id) || 0,
+        last_message: lastMessageMap.get(conv.id) || null,
+        messages: [],
       };
     });
   }

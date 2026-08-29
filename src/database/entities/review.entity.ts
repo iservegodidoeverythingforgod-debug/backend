@@ -7,9 +7,9 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { Product } from './product.entity';
-import { User } from './user.entity';
-import { Order } from './order.entity';
+import type { Product } from './product.entity';
+import type { User } from './user.entity';
+import type { Order } from './order.entity';
 
 @Entity('reviews')
 export class Review {
@@ -19,14 +19,14 @@ export class Review {
   @Column({ type: 'uuid', nullable: true })
   order_id: string | null;
 
-  @ManyToOne(() => Order, { onDelete: 'SET NULL', nullable: true })
+  @ManyToOne('Order', { onDelete: 'SET NULL', nullable: true })
   @JoinColumn({ name: 'order_id' })
   order: Order | null;
 
   @Column()
   product_id: string;
 
-  @ManyToOne(() => Product, (product) => product.reviews, {
+  @ManyToOne('Product', 'reviews', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'product_id' })
@@ -35,7 +35,7 @@ export class Review {
   @Column()
   user_id: string;
 
-  @ManyToOne(() => User, (user) => user.reviews, { onDelete: 'CASCADE', eager: true })
+  @ManyToOne('User', 'reviews', { onDelete: 'CASCADE', eager: true })
   @JoinColumn({ name: 'user_id' })
   user: User;
 

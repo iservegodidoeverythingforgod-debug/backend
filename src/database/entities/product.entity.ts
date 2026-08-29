@@ -8,10 +8,10 @@ import {
   OneToMany,
   JoinColumn,
 } from 'typeorm';
-import { Category } from './category.entity';
-import { Review } from './review.entity';
-import { OrderItem } from './order-item.entity';
-import { GrowthRule } from './growth-rule.entity';
+import type { Category } from './category.entity';
+import type { Review } from './review.entity';
+import type { OrderItem } from './order-item.entity';
+import type { GrowthRule } from './growth-rule.entity';
 
 @Entity('products')
 export class Product {
@@ -21,7 +21,7 @@ export class Product {
   @Column({ nullable: true })
   category_id: string;
 
-  @ManyToOne(() => Category, (category) => category.products, {
+  @ManyToOne('Category', 'products', {
     onDelete: 'SET NULL',
     eager: true,
   })
@@ -31,7 +31,7 @@ export class Product {
   @Column({ nullable: true })
   rule_id: string;
 
-  @ManyToOne(() => GrowthRule, (rule) => rule.products, {
+  @ManyToOne('GrowthRule', 'products', {
     onDelete: 'SET NULL',
     eager: true,
   })
@@ -82,10 +82,10 @@ export class Product {
   @Column({ default: true })
   is_active: boolean;
 
-  @OneToMany(() => Review, (review) => review.product)
+  @OneToMany('Review', 'product')
   reviews: Review[];
 
-  @OneToMany(() => OrderItem, (orderItem) => orderItem.product)
+  @OneToMany('OrderItem', 'product')
   order_items: OrderItem[];
 
   @CreateDateColumn()

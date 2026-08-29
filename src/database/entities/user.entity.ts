@@ -7,9 +7,10 @@ import {
   OneToMany,
 } from 'typeorm';
 import { Role } from '../../common/enums';
-import { RefreshToken } from './refresh-token.entity';
-import { Order } from './order.entity';
-import { Review } from './review.entity';
+import type { RefreshToken } from './refresh-token.entity';
+import type { Order } from './order.entity';
+import type { Review } from './review.entity';
+import type { ChatConversation } from './chat-conversation.entity';
 
 @Entity('users')
 export class User {
@@ -49,17 +50,17 @@ export class User {
   @Column({ type: 'timestamp with time zone', nullable: true })
   verified_at: Date;
 
-  @OneToMany(() => RefreshToken, (token) => token.user)
+  @OneToMany('RefreshToken', 'user')
   refresh_tokens: RefreshToken[];
 
-  @OneToMany(() => Order, (order) => order.user)
+  @OneToMany('Order', 'user')
   orders: Order[];
 
-  @OneToMany(() => Review, (review) => review.user)
+  @OneToMany('Review', 'user')
   reviews: Review[];
 
   @OneToMany('ChatConversation', 'customer')
-  conversations: any[];
+  conversations: ChatConversation[];
 
   @CreateDateColumn()
   created_at: Date;

@@ -6,8 +6,8 @@ import {
   UpdateDateColumn,
   OneToMany,
 } from 'typeorm';
-import { GrowthStage } from './growth-stage.entity';
-import { Product } from './product.entity';
+import type { GrowthStage } from './growth-stage.entity';
+import type { Product } from './product.entity';
 
 export type InputType = 'number' | 'enum';
 
@@ -34,13 +34,13 @@ export class GrowthRule {
   @Column({ type: 'jsonb', default: () => "'[]'" })
   input_definitions: InputDefinition[];
 
-  @OneToMany(() => GrowthStage, (stage) => stage.rule, {
+  @OneToMany('GrowthStage', 'rule', {
     cascade: true,
     eager: true,
   })
   stages: GrowthStage[];
 
-  @OneToMany(() => Product, (product) => product.growth_rule)
+  @OneToMany('Product', 'growth_rule')
   products: Product[];
 
   @CreateDateColumn()

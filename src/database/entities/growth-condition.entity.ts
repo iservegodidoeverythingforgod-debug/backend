@@ -7,7 +7,7 @@ import {
   ManyToOne,
   JoinColumn,
 } from 'typeorm';
-import { GrowthStage } from './growth-stage.entity';
+import type { GrowthStage } from './growth-stage.entity';
 
 export interface RuleItemOutput {
   rule: string[];
@@ -39,7 +39,7 @@ export class GrowthCondition {
   @Column()
   stage_id: string;
 
-  @ManyToOne(() => GrowthStage, (stage) => stage.conditions, {
+  @ManyToOne('GrowthStage', 'conditions', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'stage_id' })

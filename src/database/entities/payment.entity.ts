@@ -8,8 +8,8 @@ import {
   JoinColumn,
   ManyToOne,
 } from 'typeorm';
-import { Order } from './order.entity';
-import { User } from './user.entity';
+import type { Order } from './order.entity';
+import type { User } from './user.entity';
 import { PaymentStatus } from '../../common/enums';
 
 @Entity('payments')
@@ -20,7 +20,7 @@ export class Payment {
   @Column()
   order_id: string;
 
-  @OneToOne(() => Order, (order) => order.payment, { onDelete: 'CASCADE' })
+  @OneToOne('Order', 'payment', { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'order_id' })
   order: Order;
 
@@ -56,7 +56,7 @@ export class Payment {
   @Column({ nullable: true })
   verified_by: string;
 
-  @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne('User', { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'verified_by' })
   verifier: User;
 

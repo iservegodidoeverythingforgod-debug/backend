@@ -58,7 +58,7 @@ async function bootstrap() {
   app.useGlobalFilters(new AllExceptionsFilter());
 
   // CORS Configuration
-  const configuredCorsOrigin = "http://localhost:63050";//process.env.CORS_ORIGIN;
+  const configuredCorsOrigin = "http://localhost:50701";//process.env.CORS_ORIGIN;
 
   app.enableCors({
     origin: configuredCorsOrigin,
@@ -68,28 +68,30 @@ async function bootstrap() {
     exposedHeaders: 'Set-Cookie',
   });
 
-  // Swagger Documentation Setup
-  const config = new DocumentBuilder()
-    .setTitle('Online Seed & Herb Store API')
-    .setDescription(
-      'RESTful API for Seed & Herb Marketplace featuring Rule-based Plant Growth State Machine, JWT Token Rotation, and QR Payment Slip Verification.',
-    )
-    .setVersion('1.0.0')
-    .addBearerAuth()
-    .addTag('System Health & Monitoring')
-    .addTag('Authentication & Profile')
-    .addTag('Seeds & Herbs Products')
-    .addTag('Categories')
-    .addTag('Plant Growth Simulation Engine (Rule-based State Machine)')
-    .addTag('Orders')
-    .addTag('Payments & QR Slip Verification')
-    .addTag('Product Reviews & User Satisfaction')
-    .addTag('Admin User Management')
-    .addTag('Admin Analytics & Satisfaction Reports')
-    .build();
+  // Swagger Documentation Setup (enabled in non-production or when explicitly requested)
+  if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true') {
+    const config = new DocumentBuilder()
+      .setTitle('Online Seed & Herb Store API')
+      .setDescription(
+        'RESTful API for Seed & Herb Marketplace featuring Rule-based Plant Growth State Machine, JWT Token Rotation, and QR Payment Slip Verification.',
+      )
+      .setVersion('1.0.0')
+      .addBearerAuth()
+      .addTag('System Health & Monitoring')
+      .addTag('Authentication & Profile')
+      .addTag('Seeds & Herbs Products')
+      .addTag('Categories')
+      .addTag('Plant Growth Simulation Engine (Rule-based State Machine)')
+      .addTag('Orders')
+      .addTag('Payments & QR Slip Verification')
+      .addTag('Product Reviews & User Satisfaction')
+      .addTag('Admin User Management')
+      .addTag('Admin Analytics & Satisfaction Reports')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

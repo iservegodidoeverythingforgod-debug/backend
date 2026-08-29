@@ -8,9 +8,9 @@ import {
   OneToMany,
   JoinColumn,
 } from 'typeorm';
-import { GrowthRule } from './growth-rule.entity';
-import { GrowthCondition } from './growth-condition.entity';
-import { AnimationAsset } from './animation-asset.entity';
+import type { GrowthRule } from './growth-rule.entity';
+import type { GrowthCondition } from './growth-condition.entity';
+import type { AnimationAsset } from './animation-asset.entity';
 
 @Entity('growth_stages')
 export class GrowthStage {
@@ -20,7 +20,7 @@ export class GrowthStage {
   @Column()
   rule_id: string;
 
-  @ManyToOne(() => GrowthRule, (rule) => rule.stages, {
+  @ManyToOne('GrowthRule', 'stages', {
     onDelete: 'CASCADE',
   })
   @JoinColumn({ name: 'rule_id' })
@@ -35,7 +35,7 @@ export class GrowthStage {
   @Column({ type: 'uuid', nullable: true })
   animation_asset_id?: string | null;
 
-  @ManyToOne(() => AnimationAsset, {
+  @ManyToOne('AnimationAsset', {
     nullable: true,
     onDelete: 'SET NULL',
     eager: true,
@@ -87,7 +87,7 @@ export class GrowthStage {
     return this.animation_asset?.file_url;
   }
 
-  @OneToMany(() => GrowthCondition, (condition) => condition.stage, {
+  @OneToMany('GrowthCondition', 'stage', {
     cascade: true,
     eager: true,
   })

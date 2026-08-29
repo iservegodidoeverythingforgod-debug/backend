@@ -5,7 +5,7 @@ import {
   CreateDateColumn,
   OneToMany,
 } from 'typeorm';
-import { Product } from './product.entity';
+import type { Product } from './product.entity';
 
 @Entity('categories')
 export class Category {
@@ -24,7 +24,7 @@ export class Category {
   @Column({ default: 'eco' })
   icon: string;
 
-  @OneToMany(() => Product, (product) => product.category)
+  @OneToMany('Product', 'category')
   products: Product[];
 
   @CreateDateColumn()

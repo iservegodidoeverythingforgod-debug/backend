@@ -9,9 +9,9 @@ import {
   OneToOne,
   JoinColumn,
 } from 'typeorm';
-import { User } from './user.entity';
-import { OrderItem } from './order-item.entity';
-import { Payment } from './payment.entity';
+import type { User } from './user.entity';
+import type { OrderItem } from './order-item.entity';
+import type { Payment } from './payment.entity';
 import { OrderStatus } from '../../common/enums';
 
 @Entity('orders')
@@ -22,7 +22,7 @@ export class Order {
   @Column()
   user_id: string;
 
-  @ManyToOne(() => User, (user) => user.orders, { onDelete: 'RESTRICT' })
+  @ManyToOne('User', 'orders', { onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 
@@ -58,13 +58,13 @@ export class Order {
   @Column({ type: 'text', nullable: true })
   notes: string;
 
-  @OneToMany(() => OrderItem, (item) => item.order, {
+  @OneToMany('OrderItem', 'order', {
     cascade: true,
     eager: true,
   })
   items: OrderItem[];
 
-  @OneToOne(() => Payment, (payment) => payment.order, {
+  @OneToOne('Payment', 'order', {
     cascade: true,
     eager: true,
   })
