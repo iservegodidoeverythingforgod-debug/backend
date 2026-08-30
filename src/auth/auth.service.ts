@@ -608,11 +608,15 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   async logout(userId: string, refreshToken?: string) {
     if (refreshToken) {
       const tokenHash = this.hashToken(refreshToken);
+      const whereClause: any = { token_hash: tokenHash };
+      if (userId) {
+        whereClause.user_id = userId;
+      }
       await this.refreshTokenRepository.update(
-        { token_hash: tokenHash, user_id: userId },
+        whereClause,
         { is_revoked: true },
       );
-    } else {
+    } else if (userId) {
       await this.refreshTokenRepository.update(
         { user_id: userId },
         { is_revoked: true },
