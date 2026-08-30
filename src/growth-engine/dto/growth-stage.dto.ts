@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsOptional, IsInt, Min, IsUUID } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsInt, Min, IsUUID, IsObject } from 'class-validator';
 
 export class CreateGrowthStageDto {
   @ApiProperty({ description: 'Stage name', example: 'Vegetative' })
@@ -64,6 +64,22 @@ export class CreateGrowthStageDto {
   @Min(0)
   @IsOptional()
   endDay?: number;
+
+  @ApiPropertyOptional({
+    description: 'Mandatory initial input values for every variable declared in the parent rule',
+    example: { water: 80, sunlight: 30, weather: 'rainy' },
+  })
+  @IsObject()
+  @IsOptional()
+  initial_inputs?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: 'Mandatory initial input values for every variable declared in the parent rule',
+    example: { water: 80, sunlight: 30, weather: 'rainy' },
+  })
+  @IsObject()
+  @IsOptional()
+  initialInputs?: Record<string, any>;
 }
 
 export class UpdateGrowthStageDto {
@@ -129,4 +145,20 @@ export class UpdateGrowthStageDto {
   @Min(0)
   @IsOptional()
   endDay?: number;
+
+  @ApiPropertyOptional({
+    description: 'Mandatory initial input values for every variable declared in the parent rule',
+    example: { water: 80, sunlight: 30, weather: 'rainy' },
+  })
+  @IsObject()
+  @IsOptional()
+  initial_inputs?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    description: 'Mandatory initial input values for every variable declared in the parent rule',
+    example: { water: 80, sunlight: 30, weather: 'rainy' },
+  })
+  @IsObject()
+  @IsOptional()
+  initialInputs?: Record<string, any>;
 }

@@ -11,7 +11,7 @@ import { SupabaseStorageService } from '../common/storage/supabase-storage.servi
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
 import { AuditLogService } from '../common/audit/audit-log.service';
 
-describe('GrowthEngineService - Input Schema & Simulation Validation', () => {
+describe('GrowthEngineService - Input Schema & Stage Initial Inputs Validation', () => {
   let service: GrowthEngineService;
   let mockRuleRepo: any;
   let mockStageRepo: any;
@@ -29,6 +29,8 @@ describe('GrowthEngineService - Input Schema & Simulation Validation', () => {
     mockStageRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
+      create: jest.fn().mockImplementation((s) => s),
+      save: jest.fn().mockImplementation((s) => Promise.resolve({ id: 'stage-created-id', ...s })),
     };
     mockConditionRepo = {
       findOne: jest.fn(),
@@ -118,23 +120,160 @@ describe('GrowthEngineService - Input Schema & Simulation Validation', () => {
     });
   });
 
-  describe('evaluateSimulation - Defaults, Clamping, and Single-Select Enums', () => {
-    it('should use authored default and clamp out-of-range numbers during simulation', async () => {
+  describe('validateStageInitialInputs & Stage Creation Coverage', () => {
+    const parentRule: any = {
+      id: 'parent-rule-1',
+      name: 'Basil Model',
+      input_definitions: [
+        { key: 'water', type: 'number', min: 10, max: 100 },
+        { key: 'temperature', type: 'number', min: 15, max: 40 },
+        { key: 'weather', type: 'enum', enumValues: ['sunny', 'rainy', 'cloudy'] },
+      ],
+      stages: [],
+    };
+
+    it('should throw 400 BadRequestException naming the missing key when initial_inputs has partial coverage', async () => {
+      mockRuleRepo.findOne.mockResolvedValue(parentRule);
+
+      await expect(
+        service.addStage('parent-rule-1', {
+          stage_name: 'Germination',
+          start_day: 1,
+          end_day: 10,
+          initial_inputs: {
+            water: 80,
+            temperature: 25,
+            // 'weather' is missing!
+          },
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      try {
+        await service.addStage('parent-rule-1', {
+          stage_name: 'Germination',
+          start_day: 1,
+          end_day: 10,
+          initial_inputs: {
+            water: 80,
+            temperature: 25,
+          },
+        });
+      } catch (err: any) {
+        expect(err.message).toContain('weather');
+        expect(err.message).toContain('missing required initial_inputs');
+      }
+    });
+
+    it('should throw 400 BadRequestException when initial_inputs contains unknown/extra key', async () => {
+      mockRuleRepo.findOne.mockResolvedValue(parentRule);
+
+      await expect(
+        service.addStage('parent-rule-1', {
+          stage_name: 'Germination',
+          start_day: 1,
+          end_day: 10,
+          initial_inputs: {
+            water: 80,
+            temperature: 25,
+            weather: 'rainy',
+            extra_typo_key: 123,
+          },
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw 400 BadRequestException when a numeric initial value is out of bounds', async () => {
+      mockRuleRepo.findOne.mockResolvedValue(parentRule);
+
+      await expect(
+        service.addStage('parent-rule-1', {
+          stage_name: 'Germination',
+          start_day: 1,
+          end_day: 10,
+          initial_inputs: {
+            water: 150, // exceeds max 100
+            temperature: 25,
+            weather: 'rainy',
+          },
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should throw 400 BadRequestException when an enum initial value is not in enumValues', async () => {
+      mockRuleRepo.findOne.mockResolvedValue(parentRule);
+
+      await expect(
+        service.addStage('parent-rule-1', {
+          stage_name: 'Germination',
+          start_day: 1,
+          end_day: 10,
+          initial_inputs: {
+            water: 80,
+            temperature: 25,
+            weather: 'snowy', // invalid enum
+          },
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should succeed when stage provides full, valid coverage for all declared variables', async () => {
+      mockRuleRepo.findOne.mockResolvedValue(parentRule);
+
+      const stage = await service.addStage('parent-rule-1', {
+        stage_name: 'Germination',
+        start_day: 1,
+        end_day: 10,
+        initial_inputs: {
+          water: 80,
+          temperature: 28,
+          weather: 'rainy',
+        },
+      });
+
+      expect(stage).toBeDefined();
+      expect(stage.initial_inputs).toEqual({
+        water: 80,
+        temperature: 28,
+        weather: 'rainy',
+      });
+    });
+  });
+
+  describe('evaluateSimulation - Stage Initial Inputs & Legacy Fallback', () => {
+    it('should populate simulation inputs from active stage initial_inputs when inputs are omitted', async () => {
       const mockRule: any = {
-        id: 'rule-test-1',
-        name: 'Herb Growth Rule',
+        id: 'rule-multistage',
+        name: 'Multistage Herb Model',
         input_definitions: [
-          { key: 'water', type: 'number', min: 10, max: 80, default: 45 },
-          { key: 'sunlight', type: 'number', min: 0, max: 100, default: 60 },
-          { key: 'weather', type: 'enum', enumValues: ['sunny', 'cloudy', 'rainy'], default: 'cloudy' },
+          { key: 'water', type: 'number', min: 0, max: 100 },
+          { key: 'sunlight', type: 'number', min: 0, max: 100 },
+          { key: 'weather', type: 'enum', enumValues: ['sunny', 'cloudy', 'rainy'] },
         ],
         stages: [
           {
-            id: 'stage-1',
+            id: 'stage-germination',
             stage_name: 'Germination',
             stage_order: 1,
             min_day: 1,
+            max_day: 10,
+            initial_inputs: {
+              water: 85,
+              sunlight: 20,
+              weather: 'rainy',
+            },
+            conditions: [],
+          },
+          {
+            id: 'stage-vegetative',
+            stage_name: 'Vegetative',
+            stage_order: 2,
+            min_day: 11,
             max_day: 30,
+            initial_inputs: {
+              water: 45,
+              sunlight: 90,
+              weather: 'sunny',
+            },
             conditions: [],
           },
         ],
@@ -142,35 +281,45 @@ describe('GrowthEngineService - Input Schema & Simulation Validation', () => {
 
       mockRuleRepo.findOne.mockResolvedValue(mockRule);
 
-      // Simulation 1: Missing water (should use default: 45), Out-of-bounds sunlight: 150 (should clamp to 80), Missing weather (should use default: 'cloudy')
-      const res = await service.simulateDirect({
-        ruleId: 'rule-test-1',
-        cultivationDay: 10,
-        inputs: { sunlight: 150 },
+      // Simulation 1 on Day 5 (Germination): No inputs provided -> Should resolve Germination's initial_inputs
+      const resGerm = await service.simulateDirect({
+        ruleId: 'rule-multistage',
+        cultivationDay: 5,
+        inputs: {},
       });
+      expect(resGerm.inputs.water).toBe(85);
+      expect(resGerm.inputs.sunlight).toBe(20);
+      expect(resGerm.inputs.weather).toBe('rainy');
 
-      expect(res.inputs.water).toBe(45);
-      expect(res.inputs.sunlight).toBe(100);
-      expect(res.inputs.weather).toBe('cloudy');
+      // Simulation 2 on Day 20 (Vegetative): No inputs provided -> Should resolve Vegetative's initial_inputs
+      const resVeg = await service.simulateDirect({
+        ruleId: 'rule-multistage',
+        cultivationDay: 20,
+        inputs: {},
+      });
+      expect(resVeg.inputs.water).toBe(45);
+      expect(resVeg.inputs.sunlight).toBe(90);
+      expect(resVeg.inputs.weather).toBe('sunny');
     });
 
-    it('should handle legacy rule missing min/max without throwing and log warning', async () => {
+    it('should handle legacy stage missing initial_inputs without throwing and log warning', async () => {
       const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
 
       const legacyRule: any = {
         id: 'legacy-rule-123',
         name: 'Legacy Rule',
         input_definitions: [
-          { key: 'water', type: 'number' }, // No min/max
-          { key: 'weather', type: 'enum', enumValues: ['sunny', 'rainy'] },
+          { key: 'water', type: 'number', min: 10, max: 80, default: 40 },
+          { key: 'weather', type: 'enum', enumValues: ['sunny', 'rainy'], default: 'sunny' },
         ],
         stages: [
           {
-            id: 'stage-1',
+            id: 'legacy-stage-1',
             stage_name: 'Stage 1',
             stage_order: 1,
             min_day: 1,
             max_day: 30,
+            initial_inputs: {}, // Missing declared variables!
             conditions: [],
           },
         ],
@@ -181,13 +330,12 @@ describe('GrowthEngineService - Input Schema & Simulation Validation', () => {
       const res = await service.simulateDirect({
         ruleId: 'legacy-rule-123',
         cultivationDay: 5,
-        inputs: { water: 120, weather: ['rainy', 'sunny'] }, // legacy array payload
+        inputs: {}, // Omitted
       });
 
-      // Should clamp against fallback [0, 100]
-      expect(res.inputs.water).toBe(100);
-      // Should take first valid enum from array
-      expect(res.inputs.weather).toBe('rainy');
+      // Should fall back to def.default
+      expect(res.inputs.water).toBe(40);
+      expect(res.inputs.weather).toBe('sunny');
       // Should have logged warnings
       expect(warnSpy).toHaveBeenCalled();
       warnSpy.mockRestore();

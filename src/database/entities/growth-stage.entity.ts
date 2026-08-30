@@ -53,6 +53,9 @@ export class GrowthStage {
   @Column({ default: 10 })
   max_day: number;
 
+  @Column({ type: 'jsonb', default: () => "'{}'" })
+  initial_inputs: Record<string, any>;
+
   // Convenient aliases for startDay / endDay
   get start_day(): number {
     return this.min_day;

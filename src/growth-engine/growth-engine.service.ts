@@ -301,6 +301,111 @@ export class GrowthEngineService {
     }
   }
 
+  /**
+   * Validates mandatory stage-level initial_inputs.
+   * Every GrowthStage must define a valid initial value for every variable declared
+   * in its parent rule's input_definitions — no partial/missing coverage allowed.
+   */
+  validateStageInitialInputs(
+    initialInputs: Record<string, any> | undefined,
+    inputDefinitions: InputDefinition[] = [],
+    stageName?: string,
+  ): Record<string, any> {
+    if (!inputDefinitions || inputDefinitions.length === 0) {
+      if (initialInputs && Object.keys(initialInputs).length > 0) {
+        throw new BadRequestException(
+          `Stage "${stageName || 'unnamed'}" cannot define initial_inputs because the parent rule has no declared input_definitions.`,
+        );
+      }
+      return {};
+    }
+
+    if (!initialInputs || typeof initialInputs !== 'object' || Array.isArray(initialInputs)) {
+      const missingKeys = inputDefinitions.map((d) => d.key);
+      throw new BadRequestException(
+        `Stage "${stageName || 'unnamed'}" is missing mandatory initial_inputs for declared variables: ${missingKeys.join(', ')}.`,
+      );
+    }
+
+    const declaredMap = new Map<string, InputDefinition>();
+    for (const def of inputDefinitions) {
+      declaredMap.set(def.key.toLowerCase().trim(), def);
+    }
+
+    const incomingMap = new Map<string, any>();
+    for (const [k, v] of Object.entries(initialInputs)) {
+      incomingMap.set(k.toLowerCase().trim(), v);
+    }
+
+    // 1. Full coverage check: every declared variable must be explicitly defined
+    const missingKeys: string[] = [];
+    for (const def of inputDefinitions) {
+      const keyLower = def.key.toLowerCase().trim();
+      if (!incomingMap.has(keyLower) || incomingMap.get(keyLower) === undefined || incomingMap.get(keyLower) === null) {
+        missingKeys.push(def.key);
+      }
+    }
+    if (missingKeys.length > 0) {
+      throw new BadRequestException(
+        `Stage "${stageName || 'unnamed'}" is missing required initial_inputs for: ${missingKeys.join(', ')}. All declared variables must be specified.`,
+      );
+    }
+
+    // 2. Extra/unknown keys check (typo/orphaned data protection)
+    const extraKeys: string[] = [];
+    for (const [rawKey] of Object.entries(initialInputs)) {
+      if (!declaredMap.has(rawKey.toLowerCase().trim())) {
+        extraKeys.push(rawKey);
+      }
+    }
+    if (extraKeys.length > 0) {
+      throw new BadRequestException(
+        `Stage "${stageName || 'unnamed'}" contains unknown initial_inputs keys: ${extraKeys.join(', ')}. Only declared variables from the parent rule are allowed.`,
+      );
+    }
+
+    // 3. Value validation per type
+    const validatedInputs: Record<string, any> = {};
+    for (const def of inputDefinitions) {
+      const keyLower = def.key.toLowerCase().trim();
+      const val = incomingMap.get(keyLower);
+
+      if (def.type === 'number') {
+        const num = typeof val === 'number' ? val : parseFloat(val);
+        if (typeof num !== 'number' || isNaN(num)) {
+          throw new BadRequestException(
+            `Initial value for number variable "${def.key}" in stage "${stageName || 'unnamed'}" must be a valid number.`,
+          );
+        }
+        const min = def.min ?? 0;
+        const max = def.max ?? 100;
+        if (num < min || num > max) {
+          throw new BadRequestException(
+            `Initial value (${num}) for variable "${def.key}" in stage "${stageName || 'unnamed'}" must be within range [${min}, ${max}].`,
+          );
+        }
+        validatedInputs[def.key] = num;
+      } else if (def.type === 'enum') {
+        if (typeof val !== 'string' || val.trim().length === 0) {
+          throw new BadRequestException(
+            `Initial value for enum variable "${def.key}" in stage "${stageName || 'unnamed'}" must be a non-empty string.`,
+          );
+        }
+        const validEnums = def.enumValues?.map((e) => e.toLowerCase()) || [];
+        const strVal = val.trim();
+        if (!validEnums.includes(strVal.toLowerCase())) {
+          throw new BadRequestException(
+            `Initial value "${strVal}" for enum variable "${def.key}" in stage "${stageName || 'unnamed'}" is invalid. Allowed values: ${def.enumValues?.join(', ')}.`,
+          );
+        }
+        const canonical = def.enumValues?.find((e) => e.toLowerCase() === strVal.toLowerCase()) || strVal;
+        validatedInputs[def.key] = canonical;
+      }
+    }
+
+    return validatedInputs;
+  }
+
   async addStage(ruleId: string, dto: CreateGrowthStageDto): Promise<GrowthStage> {
     const rule = await this.findRuleById(ruleId);
     let order = dto.stage_order;
@@ -314,6 +419,12 @@ export class GrowthEngineService {
     const endDay = dto.endDay ?? dto.end_day ?? dto.max_day ?? 15;
 
     this.validateStageTimeline(startDay, endDay, rule.stages || []);
+
+    const validatedInitialInputs = this.validateStageInitialInputs(
+      dto.initial_inputs ?? dto.initialInputs,
+      rule.input_definitions,
+      dto.stage_name,
+    );
 
     const assetId = dto.animationAssetId ?? dto.animation_asset_id;
     let animationAsset: AnimationAsset | undefined;
@@ -334,6 +445,7 @@ export class GrowthEngineService {
       animation: animationAsset?.file_url || dto.animation || 'foliage_lush',
       min_day: startDay,
       max_day: endDay,
+      initial_inputs: validatedInitialInputs,
     });
     return this.stageRepository.save(stage);
   }
@@ -353,6 +465,15 @@ export class GrowthEngineService {
 
     if (stage.rule?.stages) {
       this.validateStageTimeline(startDay, endDay, stage.rule.stages, stageId);
+    }
+
+    if (dto.initial_inputs !== undefined || dto.initialInputs !== undefined) {
+      const validatedInitialInputs = this.validateStageInitialInputs(
+        dto.initial_inputs ?? dto.initialInputs,
+        stage.rule?.input_definitions || [],
+        dto.stage_name ?? stage.stage_name,
+      );
+      stage.initial_inputs = validatedInitialInputs;
     }
 
     if (dto.animationAssetId !== undefined || dto.animation_asset_id !== undefined) {
@@ -912,7 +1033,19 @@ export class GrowthEngineService {
             ? Number(dto.day)
             : 15;
 
-    // 2. Normalize context based on declared input_definitions
+    // 2. Resolve Active Stage strictly by: startDay <= cultivationDay <= endDay
+    let activeStage: GrowthStage | undefined;
+    const stages = (rule?.stages || []).sort((a, b) => a.stage_order - b.stage_order);
+
+    if (dto.stageId) {
+      activeStage = stages.find((s) => s.id === dto.stageId);
+    } else if (stages.length > 0) {
+      activeStage = stages.find(
+        (s) => currentDay >= s.min_day && currentDay <= s.max_day,
+      );
+    }
+
+    // 3. Normalize context based on declared input_definitions and activeStage.initial_inputs
     const context: Record<string, any> = { day: currentDay };
 
     if (rule?.input_definitions && rule.input_definitions.length > 0) {
@@ -940,18 +1073,35 @@ export class GrowthEngineService {
 
           let num: number;
           if (raw === undefined || raw === null) {
-            if (typeof def.default === 'number' && !isNaN(def.default)) {
-              num = def.default;
+            // Level 1 (Primary): activeStage.initial_inputs
+            const stageVal =
+              activeStage?.initial_inputs?.[def.key] ??
+              activeStage?.initial_inputs?.[keyLower];
+
+            if (stageVal !== undefined && stageVal !== null && !isNaN(Number(stageVal))) {
+              num = Number(stageVal);
             } else {
-              num = minVal;
-            }
-          } else {
-            num = Number(raw);
-            if (Number.isNaN(num)) {
+              // Level 2 (Defensive fallback for legacy stages): def.default / minVal
+              this.logger.warn(
+                `GrowthStage "${activeStage?.id || 'unknown'}" missing initial_input for variable "${def.key}". Falling back to authored default/min.`,
+              );
               num =
                 typeof def.default === 'number' && !isNaN(def.default)
                   ? def.default
                   : minVal;
+            }
+          } else {
+            num = Number(raw);
+            if (Number.isNaN(num)) {
+              const stageVal =
+                activeStage?.initial_inputs?.[def.key] ??
+                activeStage?.initial_inputs?.[keyLower];
+              num =
+                stageVal !== undefined && !isNaN(Number(stageVal))
+                  ? Number(stageVal)
+                  : typeof def.default === 'number' && !isNaN(def.default)
+                    ? def.default
+                    : minVal;
             }
           }
 
@@ -963,16 +1113,28 @@ export class GrowthEngineService {
           let selectedStr: string | null = null;
 
           if (raw === undefined || raw === null) {
+            // Level 1 (Primary): activeStage.initial_inputs
+            const stageVal =
+              activeStage?.initial_inputs?.[def.key] ??
+              activeStage?.initial_inputs?.[keyLower];
+
             if (
-              typeof def.default === 'string' &&
-              validEnums.includes(def.default.trim().toLowerCase())
+              typeof stageVal === 'string' &&
+              validEnums.includes(stageVal.trim().toLowerCase())
             ) {
-              selectedStr = def.default.trim();
+              selectedStr = stageVal.trim();
             } else {
+              // Level 2 (Defensive fallback for legacy stages)
+              this.logger.warn(
+                `GrowthStage "${activeStage?.id || 'unknown'}" missing initial_input for enum variable "${def.key}". Falling back to authored default/first option.`,
+              );
               selectedStr =
-                def.enumValues && def.enumValues.length > 0
-                  ? def.enumValues[0]
-                  : '';
+                typeof def.default === 'string' &&
+                validEnums.includes(def.default.trim().toLowerCase())
+                  ? def.default.trim()
+                  : def.enumValues && def.enumValues.length > 0
+                    ? def.enumValues[0]
+                    : '';
             }
           } else if (Array.isArray(raw)) {
             this.logger.warn(
@@ -986,13 +1148,19 @@ export class GrowthEngineService {
               }
             }
             if (!selectedStr) {
+              const stageVal =
+                activeStage?.initial_inputs?.[def.key] ??
+                activeStage?.initial_inputs?.[keyLower];
               selectedStr =
-                typeof def.default === 'string' &&
-                validEnums.includes(def.default.trim().toLowerCase())
-                  ? def.default.trim()
-                  : def.enumValues && def.enumValues.length > 0
-                    ? def.enumValues[0]
-                    : '';
+                typeof stageVal === 'string' &&
+                validEnums.includes(stageVal.trim().toLowerCase())
+                  ? stageVal.trim()
+                  : typeof def.default === 'string' &&
+                    validEnums.includes(def.default.trim().toLowerCase())
+                    ? def.default.trim()
+                    : def.enumValues && def.enumValues.length > 0
+                      ? def.enumValues[0]
+                      : '';
             }
           } else {
             const str = String(raw).trim();
@@ -1000,15 +1168,21 @@ export class GrowthEngineService {
               selectedStr = str;
             } else {
               this.logger.warn(
-                `GrowthRule "${rule?.id || 'unknown'}" enum input "${def.key}" received invalid enum value "${str}" (expected one of: ${def.enumValues?.join(', ')}). Falling back to default.`,
+                `GrowthRule "${rule?.id || 'unknown'}" enum input "${def.key}" received invalid enum value "${str}" (expected one of: ${def.enumValues?.join(', ')}). Falling back to stage/default.`,
               );
+              const stageVal =
+                activeStage?.initial_inputs?.[def.key] ??
+                activeStage?.initial_inputs?.[keyLower];
               selectedStr =
-                typeof def.default === 'string' &&
-                validEnums.includes(def.default.trim().toLowerCase())
-                  ? def.default.trim()
-                  : def.enumValues && def.enumValues.length > 0
-                    ? def.enumValues[0]
-                    : '';
+                typeof stageVal === 'string' &&
+                validEnums.includes(stageVal.trim().toLowerCase())
+                  ? stageVal.trim()
+                  : typeof def.default === 'string' &&
+                    validEnums.includes(def.default.trim().toLowerCase())
+                    ? def.default.trim()
+                    : def.enumValues && def.enumValues.length > 0
+                      ? def.enumValues[0]
+                      : '';
             }
           }
 
@@ -1025,18 +1199,6 @@ export class GrowthEngineService {
           context[k.toLowerCase()] = !Number.isNaN(num) ? num : v;
         }
       }
-    }
-
-    // 3. Resolve Active Stage strictly by: startDay <= cultivationDay <= endDay
-    let activeStage: GrowthStage | undefined;
-    const stages = (rule?.stages || []).sort((a, b) => a.stage_order - b.stage_order);
-
-    if (dto.stageId) {
-      activeStage = stages.find((s) => s.id === dto.stageId);
-    } else if (stages.length > 0) {
-      activeStage = stages.find(
-        (s) => currentDay >= s.min_day && currentDay <= s.max_day,
-      );
     }
 
     // Explicit "No Active Stage" result if day is outside any declared stage
