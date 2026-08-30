@@ -375,11 +375,16 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
-    // Purge expired pending registrations every 15 minutes
-    this.cleanupInterval = setInterval(
-      () => this.cleanupExpiredPendingRegistrations(),
-      15 * 60 * 1000,
-    );
+    // Initial cleanup on application boot
+    this.cleanupExpiredPendingRegistrations();
+    this.cleanupExpiredRefreshTokens();
+
+    // Periodic purge every 15 minutes for expired OTPs and expired/revoked refresh tokens
+    this.cleanupInterval = setInterval(async () => {
+      await this.cleanupExpiredPendingRegistrations();
+      await this.cleanupExpiredRefreshTokens();
+    }, 15 * 60 * 1000);
+
     if (this.cleanupInterval.unref) {
       this.cleanupInterval.unref();
     }
@@ -393,7 +398,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Background Purge: Purges expired pending registrations
+   * Background Purge: Purges expired pending registrations (OTPs)
    */
   async cleanupExpiredPendingRegistrations() {
     try {
@@ -406,6 +411,24 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     } catch (err: any) {
       this.logger.error(
         `Failed to purge expired pending registrations: ${err.message}`,
+      );
+    }
+  }
+
+  /**
+   * Background Purge: Purges expired and revoked refresh tokens past their validity window
+   */
+  async cleanupExpiredRefreshTokens() {
+    try {
+      const result = await this.refreshTokenRepository.delete({
+        expires_at: LessThan(new Date()),
+      });
+      if (result.affected && result.affected > 0) {
+        this.logger.log(`Purged ${result.affected} expired/revoked refresh token(s).`);
+      }
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to purge expired refresh tokens: ${err.message}`,
       );
     }
   }

@@ -47,6 +47,7 @@ describe('AuthService - Verify-Then-Create Registration Flow', () => {
     mockRefreshTokenRepo = {
       create: jest.fn().mockImplementation((dto) => dto),
       save: jest.fn().mockImplementation((dto) => Promise.resolve(dto)),
+      delete: jest.fn().mockResolvedValue({ affected: 3 }),
     };
 
     mockPendingRepo = {
@@ -341,7 +342,7 @@ describe('AuthService - Verify-Then-Create Registration Flow', () => {
     });
   });
 
-  describe('cleanupExpiredPendingRegistrations', () => {
+  describe('cleanupExpiredPendingRegistrations & cleanupExpiredRefreshTokens', () => {
     it('should delete records with expired otp_expires_at', async () => {
       mockPendingRepo.delete.mockResolvedValue({ affected: 4 });
 
@@ -350,6 +351,18 @@ describe('AuthService - Verify-Then-Create Registration Flow', () => {
       expect(mockPendingRepo.delete).toHaveBeenCalledWith(
         expect.objectContaining({
           otp_expires_at: expect.anything(),
+        }),
+      );
+    });
+
+    it('should delete records with expired refresh token expires_at', async () => {
+      mockRefreshTokenRepo.delete.mockResolvedValue({ affected: 3 });
+
+      await service.cleanupExpiredRefreshTokens();
+
+      expect(mockRefreshTokenRepo.delete).toHaveBeenCalledWith(
+        expect.objectContaining({
+          expires_at: expect.anything(),
         }),
       );
     });
