@@ -32,7 +32,10 @@ export class ProductsService {
     const qb = this.productRepository
       .createQueryBuilder('product')
       .leftJoinAndSelect('product.category', 'category')
-      .leftJoinAndSelect('product.growth_rule', 'growth_rule');
+      .leftJoinAndSelect('product.growth_rule', 'growth_rule')
+      .leftJoinAndSelect('growth_rule.stages', 'growth_rule_stages')
+      .leftJoinAndSelect('growth_rule_stages.conditions', 'growth_rule_conditions')
+      .leftJoinAndSelect('growth_rule_stages.animation_asset', 'growth_rule_animation_asset');
 
     if (!params?.includeInactive) {
       qb.andWhere('product.is_active = :active', { active: true });
@@ -66,6 +69,11 @@ export class ProductsService {
       qb.orderBy('product.created_at', 'DESC');
     }
 
+    if (typeof qb.addOrderBy === 'function') {
+      qb.addOrderBy('growth_rule_stages.stage_order', 'ASC');
+      qb.addOrderBy('growth_rule_conditions.condition_order', 'ASC');
+    }
+
     if (params?.page !== undefined || params?.limit !== undefined) {
       const page = Math.max(1, params?.page || 1);
       const limit = Math.max(1, params?.limit || 12);
@@ -88,7 +96,25 @@ export class ProductsService {
   async findOne(id: string) {
     const product = await this.productRepository.findOne({
       where: { id },
-      relations: ['category', 'growth_rule', 'growth_rule.stages', 'growth_rule.stages.conditions', 'reviews', 'reviews.user'],
+      relations: [
+        'category',
+        'growth_rule',
+        'growth_rule.stages',
+        'growth_rule.stages.conditions',
+        'growth_rule.stages.animation_asset',
+        'reviews',
+        'reviews.user',
+      ],
+      order: {
+        growth_rule: {
+          stages: {
+            stage_order: 'ASC',
+            conditions: {
+              condition_order: 'ASC',
+            },
+          },
+        },
+      },
     });
 
     if (!product) {
