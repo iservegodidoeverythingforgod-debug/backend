@@ -36,10 +36,10 @@ export class CategoriesService {
 
   async create(dto: CreateCategoryDto) {
     const existing = await this.categoryRepository.findOne({
-      where: [{ name: dto.name }, { slug: dto.slug }],
+      where: { name: dto.name },
     });
     if (existing) {
-      throw new ConflictException('A category with this name or slug already exists');
+      throw new ConflictException('A category with this name already exists');
     }
     const category = this.categoryRepository.create(dto);
     return this.categoryRepository.save(category);

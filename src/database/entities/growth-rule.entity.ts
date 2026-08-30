@@ -14,6 +14,9 @@ export type InputType = 'number' | 'enum';
 export interface InputDefinition {
   key: string;
   type: InputType;
+  min?: number;
+  max?: number;
+  default?: number | string;
   enumValues?: string[];
 }
 

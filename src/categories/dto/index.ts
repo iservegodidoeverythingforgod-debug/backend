@@ -7,10 +7,6 @@ export class CreateCategoryDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty({ example: 'culinary-herbs' })
-  @IsString()
-  @IsNotEmpty()
-  slug: string;
 
   @ApiPropertyOptional({ example: 'Fresh aromatic herbs for kitchen cooking' })
   @IsOptional()
@@ -29,10 +25,6 @@ export class UpdateCategoryDto {
   @IsString()
   name?: string;
 
-  @ApiPropertyOptional({ example: 'culinary-herbs' })
-  @IsOptional()
-  @IsString()
-  slug?: string;
 
   @ApiPropertyOptional({ example: 'Fresh aromatic herbs for kitchen cooking' })
   @IsOptional()

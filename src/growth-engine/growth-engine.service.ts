@@ -118,6 +118,11 @@ export class GrowthEngineService {
             `Enum input "${def.key}" must declare "enumValues" array with at least 2 entries.`,
           );
         }
+        if (def.min !== undefined || def.max !== undefined) {
+          throw new BadRequestException(
+            `Enum input "${def.key}" must not declare min or max bounds.`,
+          );
+        }
         const enumSet = new Set<string>();
         for (const val of def.enumValues) {
           if (typeof val !== 'string' || val.trim().length === 0) {
@@ -132,11 +137,50 @@ export class GrowthEngineService {
           }
           enumSet.add(val.trim().toLowerCase());
         }
+        if (def.default !== undefined && def.default !== null) {
+          if (typeof def.default !== 'string' || def.default.trim().length === 0) {
+            throw new BadRequestException(
+              `Default value for enum input "${def.key}" must be a non-empty string.`,
+            );
+          }
+          if (!enumSet.has(def.default.trim().toLowerCase())) {
+            throw new BadRequestException(
+              `Default value "${def.default}" for enum input "${def.key}" must be one of: ${def.enumValues.join(', ')}.`,
+            );
+          }
+        }
       } else if (def.type === 'number') {
         if (def.enumValues && def.enumValues.length > 0) {
           throw new BadRequestException(
             `Number input "${def.key}" must not declare enumValues.`,
           );
+        }
+        if (
+          typeof def.min !== 'number' ||
+          isNaN(def.min) ||
+          typeof def.max !== 'number' ||
+          isNaN(def.max)
+        ) {
+          throw new BadRequestException(
+            `Number input "${def.key}" must declare both numeric "min" and "max" bounds.`,
+          );
+        }
+        if (def.min >= def.max) {
+          throw new BadRequestException(
+            `Number input "${def.key}" has invalid bounds: min (${def.min}) must be strictly less than max (${def.max}).`,
+          );
+        }
+        if (def.default !== undefined && def.default !== null) {
+          if (typeof def.default !== 'number' || isNaN(def.default)) {
+            throw new BadRequestException(
+              `Default value for number input "${def.key}" must be a valid number.`,
+            );
+          }
+          if (def.default < def.min || def.default > def.max) {
+            throw new BadRequestException(
+              `Default value (${def.default}) for number input "${def.key}" must satisfy min (${def.min}) <= default <= max (${def.max}).`,
+            );
+          }
         }
       } else {
         throw new BadRequestException(
@@ -876,42 +920,106 @@ export class GrowthEngineService {
         const keyLower = def.key.toLowerCase();
         const raw = incomingInputs[def.key] ?? incomingInputs[keyLower];
 
-        if (raw === undefined || raw === null) {
-          if (def.type === 'number') {
-            context[keyLower] = 50;
-          } else {
-            context[keyLower] = def.enumValues && def.enumValues.length > 0 ? [def.enumValues[0]] : [];
-          }
-          continue;
-        }
-
         if (def.type === 'number') {
-          const num = Number(raw);
-          context[keyLower] = !Number.isNaN(num) ? num : 50;
-        } else {
-          // Enum inputs are multi-select arrays of strings
-          const validEnums = def.enumValues?.map((e) => e.toLowerCase()) || [];
-          const rawArray = Array.isArray(raw) ? raw : [raw];
-          const selectedEnumValues: string[] = [];
+          // Resolve min/max with fallback and logging for legacy rules
+          let minVal = def.min;
+          let maxVal = def.max;
+          if (
+            minVal === undefined ||
+            maxVal === undefined ||
+            isNaN(minVal) ||
+            isNaN(maxVal) ||
+            minVal >= maxVal
+          ) {
+            minVal = 0;
+            maxVal = 100;
+            this.logger.warn(
+              `GrowthRule "${rule?.id || 'unknown'}" number input "${def.key}" lacks valid min/max bounds. Falling back to default range [0, 100].`,
+            );
+          }
 
-          for (const item of rawArray) {
-            const strVal = String(item).trim();
-            if (validEnums.includes(strVal.toLowerCase())) {
-              selectedEnumValues.push(strVal);
+          let num: number;
+          if (raw === undefined || raw === null) {
+            if (typeof def.default === 'number' && !isNaN(def.default)) {
+              num = def.default;
             } else {
-              this.logger.warn(
-                `Input "${def.key}" received invalid enum value "${strVal}" (expected one of: ${def.enumValues?.join(', ')})`,
-              );
+              num = minVal;
+            }
+          } else {
+            num = Number(raw);
+            if (Number.isNaN(num)) {
+              num =
+                typeof def.default === 'number' && !isNaN(def.default)
+                  ? def.default
+                  : minVal;
             }
           }
-          context[keyLower] = selectedEnumValues;
+
+          // Actively clamp incoming numeric values to [minVal, maxVal]
+          context[keyLower] = Math.min(Math.max(num, minVal), maxVal);
+        } else {
+          // Enum input: single string value
+          const validEnums = def.enumValues?.map((e) => e.toLowerCase()) || [];
+          let selectedStr: string | null = null;
+
+          if (raw === undefined || raw === null) {
+            if (
+              typeof def.default === 'string' &&
+              validEnums.includes(def.default.trim().toLowerCase())
+            ) {
+              selectedStr = def.default.trim();
+            } else {
+              selectedStr =
+                def.enumValues && def.enumValues.length > 0
+                  ? def.enumValues[0]
+                  : '';
+            }
+          } else if (Array.isArray(raw)) {
+            this.logger.warn(
+              `GrowthRule "${rule?.id || 'unknown'}" enum input "${def.key}" received legacy array payload: ${JSON.stringify(raw)}. Using first valid entry.`,
+            );
+            for (const item of raw) {
+              const str = String(item).trim();
+              if (validEnums.includes(str.toLowerCase())) {
+                selectedStr = str;
+                break;
+              }
+            }
+            if (!selectedStr) {
+              selectedStr =
+                typeof def.default === 'string' &&
+                validEnums.includes(def.default.trim().toLowerCase())
+                  ? def.default.trim()
+                  : def.enumValues && def.enumValues.length > 0
+                    ? def.enumValues[0]
+                    : '';
+            }
+          } else {
+            const str = String(raw).trim();
+            if (validEnums.includes(str.toLowerCase())) {
+              selectedStr = str;
+            } else {
+              this.logger.warn(
+                `GrowthRule "${rule?.id || 'unknown'}" enum input "${def.key}" received invalid enum value "${str}" (expected one of: ${def.enumValues?.join(', ')}). Falling back to default.`,
+              );
+              selectedStr =
+                typeof def.default === 'string' &&
+                validEnums.includes(def.default.trim().toLowerCase())
+                  ? def.default.trim()
+                  : def.enumValues && def.enumValues.length > 0
+                    ? def.enumValues[0]
+                    : '';
+            }
+          }
+
+          context[keyLower] = selectedStr;
         }
       }
     } else {
       // Fallback defaults for legacy rules without explicit schema
       for (const [k, v] of Object.entries(incomingInputs)) {
         if (Array.isArray(v)) {
-          context[k.toLowerCase()] = v;
+          context[k.toLowerCase()] = v.length > 0 ? v[0] : '';
         } else {
           const num = Number(v);
           context[k.toLowerCase()] = !Number.isNaN(num) ? num : v;
@@ -1198,12 +1306,11 @@ export class GrowthEngineService {
       const allowedValues = inMatch[2].split(',').map((v) => v.trim().toLowerCase());
       const currentValue = context[varName];
 
-      if (Array.isArray(currentValue)) {
-        // Multi-select enum: true if at least one selected state matches
-        return currentValue.some((v) => allowedValues.includes(String(v).toLowerCase()));
-      }
       if (typeof currentValue === 'string') {
         return allowedValues.includes(currentValue.toLowerCase());
+      }
+      if (Array.isArray(currentValue)) {
+        return currentValue.some((v) => allowedValues.includes(String(v).toLowerCase()));
       }
       return false;
     }
@@ -1235,28 +1342,21 @@ export class GrowthEngineService {
     const rhsRaw = compMatch[3];
 
     // Resolve LHS
-    const lhsVal = context[lhsKey] !== undefined ? context[lhsKey] : !isNaN(parseFloat(lhsKey)) ? parseFloat(lhsKey) : lhsKey;
+    const lhsVal =
+      context[lhsKey] !== undefined
+        ? context[lhsKey]
+        : !isNaN(parseFloat(lhsKey))
+          ? parseFloat(lhsKey)
+          : lhsKey;
 
     // Resolve RHS
     const rhsLower = rhsRaw.toLowerCase();
-    const rhsVal = context[rhsLower] !== undefined ? context[rhsLower] : !isNaN(parseFloat(rhsRaw)) ? parseFloat(rhsRaw) : rhsRaw;
-
-    // Multi-select enum array comparisons
-    if (Array.isArray(lhsVal)) {
-      const rhsStr = String(rhsVal).toLowerCase();
-      const hasMatch = lhsVal.map((v) => String(v).toLowerCase()).includes(rhsStr);
-      if (op === '==' || op === '=') return hasMatch;
-      if (op === '!=' || op === '<>') return !hasMatch;
-      return false;
-    }
-
-    if (Array.isArray(rhsVal)) {
-      const lhsStr = String(lhsVal).toLowerCase();
-      const hasMatch = rhsVal.map((v) => String(v).toLowerCase()).includes(lhsStr);
-      if (op === '==' || op === '=') return hasMatch;
-      if (op === '!=' || op === '<>') return !hasMatch;
-      return false;
-    }
+    const rhsVal =
+      context[rhsLower] !== undefined
+        ? context[rhsLower]
+        : !isNaN(parseFloat(rhsRaw))
+          ? parseFloat(rhsRaw)
+          : rhsRaw;
 
     // Numeric comparison
     if (typeof lhsVal === 'number' && typeof rhsVal === 'number') {
@@ -1279,7 +1379,7 @@ export class GrowthEngineService {
           return false;
       }
     } else {
-      // String / Enum comparison
+      // String / Enum comparison (direct equality semantics)
       const lhsStr = String(lhsVal).toLowerCase();
       const rhsStr = String(rhsVal).toLowerCase();
       switch (op) {

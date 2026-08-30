@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString,
+  IsNumber,
   IsNotEmpty,
   IsOptional,
   IsBoolean,
@@ -33,6 +34,29 @@ export class InputDefinitionDto {
     message: "type must be either 'number' or 'enum'",
   })
   type: 'number' | 'enum';
+
+  @ApiPropertyOptional({
+    description: 'Minimum value for number input (required when type === "number")',
+    example: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  min?: number;
+
+  @ApiPropertyOptional({
+    description: 'Maximum value for number input (required when type === "number")',
+    example: 100,
+  })
+  @IsOptional()
+  @IsNumber()
+  max?: number;
+
+  @ApiPropertyOptional({
+    description: 'Default value for input (number for "number" type, string for "enum" type)',
+    example: 50,
+  })
+  @IsOptional()
+  default?: number | string;
 
   @ApiPropertyOptional({
     description:
