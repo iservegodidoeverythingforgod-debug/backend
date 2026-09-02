@@ -56,11 +56,13 @@ export class ProductsController {
     @Query('includeInactive') includeInactive?: boolean,
     @Query('sortBy') sortBy?: string,
     @Query('order') order?: 'ASC' | 'DESC',
+    @Query('sortOrder') sortOrder?: 'ASC' | 'DESC',
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     const pageNum = page ? Math.max(1, parseInt(page, 10) || 1) : undefined;
     const limitNum = limit ? Math.max(1, parseInt(limit, 10) || 12) : undefined;
+    const resolvedOrder = (order || (sortOrder ? sortOrder.toUpperCase() : undefined)) as 'ASC' | 'DESC' | undefined;
 
     return this.productsService.findAll({
       categoryId,
@@ -68,7 +70,7 @@ export class ProductsController {
       difficulty,
       includeInactive: String(includeInactive) === 'true',
       sortBy,
-      order,
+      order: resolvedOrder,
       page: pageNum,
       limit: limitNum,
     });

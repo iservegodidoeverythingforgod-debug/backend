@@ -166,5 +166,63 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
       expect(result.failedItems[0].id).toBe('prod-missing');
     });
   });
+
+  describe('findAll category filtering', () => {
+    it('should filter by UUID when categoryId is a valid UUID', async () => {
+      const qbMock: any = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([
+          [{ id: 'prod-1', name: 'Product 1', stock: 10 }],
+          1,
+        ]),
+      };
+      mockProductRepo.createQueryBuilder = jest.fn().mockReturnValue(qbMock);
+
+      const result: any = await service.findAll({
+        categoryId: 'c0000001-0000-0000-0000-000000000001',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(qbMock.andWhere).toHaveBeenCalledWith(
+        '(product.category_id = :catFilter OR category.id = :catFilter)',
+        { catFilter: 'c0000001-0000-0000-0000-000000000001' },
+      );
+      expect(result.total).toBe(1);
+    });
+
+    it('should filter by category name when categoryId is a name string', async () => {
+      const qbMock: any = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([
+          [{ id: 'prod-1', name: 'Product 1', stock: 10 }],
+          1,
+        ]),
+      };
+      mockProductRepo.createQueryBuilder = jest.fn().mockReturnValue(qbMock);
+
+      const result: any = await service.findAll({
+        categoryId: 'Herbs',
+        page: 1,
+        limit: 10,
+      });
+
+      expect(qbMock.andWhere).toHaveBeenCalledWith(
+        'LOWER(category.name) = LOWER(:catFilter)',
+        { catFilter: 'Herbs' },
+      );
+      expect(result.total).toBe(1);
+    });
+  });
 });
 

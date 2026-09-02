@@ -84,10 +84,12 @@ export class ProductsService {
       params.categoryId !== 'ALL'
     ) {
       const catFilter = params.categoryId.trim();
-      qb.andWhere(
-        '(product.category_id = :catFilter OR category.id = :catFilter OR LOWER(category.name) = LOWER(:catFilter))',
-        { catFilter },
-      );
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(catFilter);
+      if (isUuid) {
+        qb.andWhere('(product.category_id = :catFilter OR category.id = :catFilter)', { catFilter });
+      } else {
+        qb.andWhere('LOWER(category.name) = LOWER(:catFilter)', { catFilter });
+      }
     }
 
     if (params?.difficulty) {
@@ -108,6 +110,8 @@ export class ProductsService {
 
     if (['price', 'name', 'stock', 'harvest_days', 'germination_days', 'created_at'].includes(sortField)) {
       qb.orderBy(`product.${sortField}`, sortOrder);
+    } else if (sortField === 'createdAt') {
+      qb.orderBy('product.created_at', sortOrder);
     } else {
       qb.orderBy('product.created_at', 'DESC');
     }
