@@ -164,8 +164,20 @@ export class ProductsService {
       this.storageCleanupService.deleteFileByUrl(product.image_url);
     }
 
+    // Explicitly synchronize relation foreign keys so TypeORM does not revert to old relations
+    if ('category_id' in dto) {
+      product.category_id = dto.category_id ? dto.category_id.trim() : (null as any);
+      product.category = null as any;
+    }
+
+    if ('rule_id' in dto) {
+      product.rule_id = dto.rule_id ? dto.rule_id.trim() : (null as any);
+      product.growth_rule = null as any;
+    }
+
     Object.assign(product, dto);
-    return this.productRepository.save(product);
+    await this.productRepository.save(product);
+    return this.findOne(id);
   }
 
   async updateStock(id: string, delta: number) {
