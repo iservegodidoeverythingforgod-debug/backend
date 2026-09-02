@@ -66,22 +66,36 @@ export class OrdersService {
         where: { id: prodId },
       });
 
-      if (!product) {
-        throw new NotFoundException(`Product ${prodId} not found`);
-      }
+      // Calculate available stock on-the-fly (Physical stock - active reserved quantity)
+      const reservedRaw = await this.orderItemRepository
+        .createQueryBuilder('item')
+        .innerJoin('item.order', 'order')
+        .select('SUM(item.quantity)', 'reserved_qty')
+        .where('item.product_id = :productId', { productId: prodId })
+        .andWhere('order.status IN (:...activeStatuses)', {
+          activeStatuses: [
+            OrderStatus.PENDING_PAYMENT,
+            OrderStatus.PAYMENT_SUBMITTED,
+            OrderStatus.PAID_CONFIRMED,
+            OrderStatus.SHIPPED,
+          ],
+        })
+        .getRawOne();
 
-      if (product.stock < item.quantity) {
+      const reserved = Number(reservedRaw?.reserved_qty || 0);
+      const availableStock = Math.max(0, product.stock - reserved);
+
+      if (availableStock < item.quantity) {
         throw new BadRequestException(
-          `Insufficient stock for "${product.name}". Available: ${product.stock}, requested: ${item.quantity}`,
+          `Insufficient stock for "${product.name}". Available: ${availableStock}, requested: ${item.quantity}`,
         );
       }
 
       const subtotal = product.price * item.quantity;
       totalAmount += subtotal;
 
-      // Decrement stock
-      product.stock -= item.quantity;
-      await this.productRepository.save(product);
+      // Note: Stock is not deducted on order creation.
+      // It is deducted only when the order status reaches DELIVERED.
 
       orderItems.push({
         product_id: product.id,
@@ -135,28 +149,29 @@ export class OrdersService {
       order: { created_at: 'DESC' },
     });
 
-    const reviews = await this.reviewRepository.find({
-      where: { user_id: userId },
-    });
+    const orderIds = orders.map((o) => o.id);
+    if (orderIds.length === 0) return [];
 
-    const reviewedOrderProductKeys = new Set(
-      reviews
-        .filter((r) => !!r.order_id)
-        .map((r) => `${r.order_id}_${r.product_id}`),
+    const reviews = await this.reviewRepository
+      .createQueryBuilder('r')
+      .where('r.order_id IN (:...orderIds)', { orderIds })
+      .getMany();
+
+    const reviewedKeySet = new Set(
+      reviews.map((r) => `${r.order_id}_${r.product_id}`),
     );
 
-    return orders.map((o) => {
-      const itemsWithReviewed = (o.items || []).map((item) => ({
+    return orders.map((order) => {
+      const itemsWithReviewed = (order.items || []).map((item) => ({
         ...item,
-        is_reviewed: reviewedOrderProductKeys.has(`${o.id}_${item.product_id}`),
+        is_reviewed: reviewedKeySet.has(`${order.id}_${item.product_id}`),
       }));
-
       const isFullyReviewed =
         itemsWithReviewed.length > 0 &&
         itemsWithReviewed.every((item) => item.is_reviewed);
 
       return {
-        ...o,
+        ...order,
         items: itemsWithReviewed,
         is_reviewed: isFullyReviewed,
         is_fully_reviewed: isFullyReviewed,
@@ -165,19 +180,14 @@ export class OrdersService {
   }
 
   async findAllForAdmin(status?: OrderStatus) {
-    const qb = this.orderRepository
-      .createQueryBuilder('order')
-      .leftJoinAndSelect('order.items', 'items')
-      .leftJoinAndSelect('order.payment', 'payment')
-      .leftJoinAndSelect('order.user', 'user')
-      .leftJoinAndSelect('items.product', 'product');
+    const where = status ? { status } : {};
+    const orders = await this.orderRepository.find({
+      where,
+      relations: ['items', 'payment', 'user', 'items.product'],
+      order: { created_at: 'DESC' },
+    });
 
-    if (status) {
-      qb.andWhere('order.status = :status', { status });
-    }
-
-    qb.orderBy('order.created_at', 'DESC');
-    return qb.getMany();
+    return orders;
   }
 
   async findOne(id: string) {
@@ -216,8 +226,32 @@ export class OrdersService {
   async updateStatus(id: string, dto: UpdateOrderStatusDto, adminId?: string) {
     const order = await this.findOne(id);
     const oldStatus = order.status;
+
+    // Terminal state check: Once delivered, order status cannot be changed
+    if (oldStatus === OrderStatus.DELIVERED) {
+      if (dto.status !== OrderStatus.DELIVERED) {
+        throw new BadRequestException('Cannot change status of a delivered order as it is completed and finalized');
+      }
+      return order;
+    }
+
     order.status = dto.status;
     const savedOrder = await this.orderRepository.save(order);
+
+    // Deduct stock ONLY when order status becomes DELIVERED
+    if (dto.status === OrderStatus.DELIVERED) {
+      if (order.items && order.items.length > 0) {
+        for (const item of order.items) {
+          const product = await this.productRepository.findOne({
+            where: { id: item.product_id },
+          });
+          if (product) {
+            product.stock = Math.max(0, product.stock - item.quantity);
+            await this.productRepository.save(product);
+          }
+        }
+      }
+    }
 
     // Synchronize payment status and audit trail
     if (order.payment) {

@@ -144,6 +144,9 @@ describe('Phase 2 Runtime Optimizations - Response Shape Regression Suite', () =
 
     mockOrderItemRepo = {
       createQueryBuilder: jest.fn().mockReturnValue({
+        innerJoin: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
         select: jest.fn().mockReturnThis(),
         addSelect: jest.fn().mockReturnThis(),
         groupBy: jest.fn().mockReturnThis(),
@@ -151,6 +154,7 @@ describe('Phase 2 Runtime Optimizations - Response Shape Regression Suite', () =
         orderBy: jest.fn().mockReturnThis(),
         limit: jest.fn().mockReturnThis(),
         getRawMany: jest.fn().mockResolvedValue([]),
+        getRawOne: jest.fn().mockResolvedValue(null),
       }),
     };
 

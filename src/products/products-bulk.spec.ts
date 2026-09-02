@@ -2,11 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProductsService } from './products.service';
 import { Product } from '../database/entities/product.entity';
+import { OrderItem } from '../database/entities/order-item.entity';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
 
 describe('ProductsService - Bulk & Storage Cleanup', () => {
   let service: ProductsService;
   let mockProductRepo: any;
+  let mockOrderItemRepo: any;
   let mockStorageCleanupService: Partial<StorageCleanupService>;
   let mockEntityManager: any;
 
@@ -14,6 +16,28 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
     mockStorageCleanupService = {
       deleteFileByUrl: jest.fn().mockResolvedValue(true),
       deleteFilesByUrls: jest.fn().mockResolvedValue({ deleted: 2, failed: 0 }),
+    };
+
+    const qbMock: any = {
+      getRawMany: jest.fn().mockResolvedValue([]),
+      getRawOne: jest.fn().mockResolvedValue(null),
+    };
+    qbMock.innerJoin = jest.fn().mockReturnValue(qbMock);
+    qbMock.leftJoin = jest.fn().mockReturnValue(qbMock);
+    qbMock.leftJoinAndSelect = jest.fn().mockReturnValue(qbMock);
+    qbMock.innerJoinAndSelect = jest.fn().mockReturnValue(qbMock);
+    qbMock.select = jest.fn().mockReturnValue(qbMock);
+    qbMock.addSelect = jest.fn().mockReturnValue(qbMock);
+    qbMock.where = jest.fn().mockReturnValue(qbMock);
+    qbMock.andWhere = jest.fn().mockReturnValue(qbMock);
+    qbMock.orWhere = jest.fn().mockReturnValue(qbMock);
+    qbMock.groupBy = jest.fn().mockReturnValue(qbMock);
+    qbMock.addGroupBy = jest.fn().mockReturnValue(qbMock);
+    qbMock.orderBy = jest.fn().mockReturnValue(qbMock);
+    qbMock.addOrderBy = jest.fn().mockReturnValue(qbMock);
+
+    mockOrderItemRepo = {
+      createQueryBuilder: jest.fn().mockReturnValue(qbMock),
     };
 
     mockEntityManager = {
@@ -38,6 +62,10 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
         {
           provide: getRepositoryToken(Product),
           useValue: mockProductRepo,
+        },
+        {
+          provide: getRepositoryToken(OrderItem),
+          useValue: mockOrderItemRepo,
         },
         {
           provide: StorageCleanupService,

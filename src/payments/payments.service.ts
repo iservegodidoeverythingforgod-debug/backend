@@ -85,19 +85,7 @@ export class PaymentsService {
     if (order) {
       if (dto.status === PaymentStatus.VERIFIED) {
         order.status = OrderStatus.PAID_CONFIRMED;
-
-        // Deduct inventory stock for purchased products
-        if (order.items) {
-          for (const item of order.items) {
-            const product = await this.productRepository.findOne({
-              where: { id: item.product_id },
-            });
-            if (product) {
-              product.stock = Math.max(0, product.stock - item.quantity);
-              await this.productRepository.save(product);
-            }
-          }
-        }
+        // Note: Inventory stock is deducted only when the order status reaches DELIVERED.
       } else if (dto.status === PaymentStatus.REJECTED) {
         order.status = OrderStatus.PENDING_PAYMENT;
       }

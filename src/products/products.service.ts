@@ -2,6 +2,8 @@ import { Injectable, NotFoundException, BadRequestException, Logger } from '@nes
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In } from 'typeorm';
 import { Product } from '../database/entities/product.entity';
+import { OrderItem } from '../database/entities/order-item.entity';
+import { OrderStatus } from '../common/enums';
 import { CreateProductDto, UpdateProductDto } from './dto';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
@@ -13,8 +15,45 @@ export class ProductsService {
   constructor(
     @InjectRepository(Product)
     private productRepository: Repository<Product>,
+    @InjectRepository(OrderItem)
+    private orderItemRepository: Repository<OrderItem>,
     private readonly storageCleanupService: StorageCleanupService,
   ) {}
+
+  private async calculateReservedQuantities(productIds?: string[]): Promise<Map<string, number>> {
+    try {
+      const qb = this.orderItemRepository
+        .createQueryBuilder('item')
+        .innerJoin('item.order', 'order')
+        .select('item.product_id', 'product_id')
+        .addSelect('SUM(item.quantity)', 'reserved_qty')
+        .where('order.status IN (:...activeStatuses)', {
+          activeStatuses: [
+            OrderStatus.PENDING_PAYMENT,
+            OrderStatus.PAYMENT_SUBMITTED,
+            OrderStatus.PAID_CONFIRMED,
+            OrderStatus.SHIPPED,
+          ],
+        })
+        .groupBy('item.product_id');
+
+      if (productIds && productIds.length > 0) {
+        qb.andWhere('item.product_id IN (:...productIds)', { productIds });
+      }
+
+      const raw = await qb.getRawMany();
+      const map = new Map<string, number>();
+      for (const r of raw) {
+        if (r.product_id) {
+          map.set(r.product_id, Number(r.reserved_qty) || 0);
+        }
+      }
+      return map;
+    } catch (err: any) {
+      this.logger.error(`Error calculating reserved quantities: ${err?.message}`);
+      return new Map<string, number>();
+    }
+  }
 
   async findAll(params?: {
     categoryId?: string;
@@ -84,9 +123,23 @@ export class ProductsService {
       const skip = (page - 1) * limit;
 
       const [data, total] = await qb.skip(skip).take(limit).getManyAndCount();
+      const productIds = data.map((p) => p.id);
+      const reservedMap = await this.calculateReservedQuantities(productIds);
+
+      const items = data.map((product) => {
+        const reserved = reservedMap.get(product.id) || 0;
+        const availableStock = Math.max(0, product.stock - reserved);
+        return {
+          ...product,
+          physical_stock: product.stock,
+          reserved_stock: reserved,
+          available_stock: availableStock,
+          stock: availableStock,
+        };
+      });
 
       return {
-        data,
+        data: items,
         total,
         page,
         limit,
@@ -94,7 +147,21 @@ export class ProductsService {
       };
     }
 
-    return qb.getMany();
+    const products = await qb.getMany();
+    const productIds = products.map((p) => p.id);
+    const reservedMap = await this.calculateReservedQuantities(productIds);
+
+    return products.map((product) => {
+      const reserved = reservedMap.get(product.id) || 0;
+      const availableStock = Math.max(0, product.stock - reserved);
+      return {
+        ...product,
+        physical_stock: product.stock,
+        reserved_stock: reserved,
+        available_stock: availableStock,
+        stock: availableStock,
+      };
+    });
   }
 
   async findOne(id: string) {
@@ -125,7 +192,17 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
 
-    return product;
+    const reservedMap = await this.calculateReservedQuantities([product.id]);
+    const reserved = reservedMap.get(product.id) || 0;
+    const availableStock = Math.max(0, product.stock - reserved);
+
+    return {
+      ...product,
+      physical_stock: product.stock,
+      reserved_stock: reserved,
+      available_stock: availableStock,
+      stock: availableStock,
+    };
   }
 
   async create(dto: CreateProductDto) {
