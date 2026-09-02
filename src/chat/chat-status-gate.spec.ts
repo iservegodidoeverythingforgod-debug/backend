@@ -157,4 +157,57 @@ describe('ChatService - Conversation Status Gate (CLOSED vs OPEN)', () => {
       );
     });
   });
+
+  describe('createCustomerConversation status gating', () => {
+    it('should reject new conversation creation when customer already has a CLOSED conversation', async () => {
+      const closedConv = {
+        id: 'conv-closed-1',
+        customer_id: 'cust-1',
+        status: ConversationStatus.CLOSED,
+      };
+
+      // em.findOne first call (OPEN check) returns null, second call (CLOSED check) returns closedConv
+      mockConvRepo.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(closedConv);
+
+      await expect(
+        service.createCustomerConversation('cust-1', {
+          message: 'Trying to start a new chat after admin closed previous one',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should create new conversation if customer has no conversations (e.g. previous was deleted by admin)', async () => {
+      mockConvRepo.findOne
+        .mockResolvedValueOnce(null) // no OPEN
+        .mockResolvedValueOnce(null); // no CLOSED
+
+      const result = await service.createCustomerConversation('cust-1', {
+        message: 'Fresh inquiry',
+      });
+
+      expect(result).toBeDefined();
+      expect(result.conversation).toBeDefined();
+      expect(result.message).toBeDefined();
+    });
+
+    it('should append to existing OPEN conversation if customer has an open thread', async () => {
+      const openConv = {
+        id: 'conv-open-1',
+        customer_id: 'cust-1',
+        status: ConversationStatus.OPEN,
+      };
+
+      mockConvRepo.findOne.mockResolvedValueOnce(openConv);
+
+      const result = await service.createCustomerConversation('cust-1', {
+        message: 'Follow-up in open thread',
+      });
+
+      expect(result.conversation.id).toBe('conv-open-1');
+      expect(result.message.message).toBe('Follow-up in open thread');
+      expect(result.message.conversation_id).toBe('conv-open-1');
+    });
+  });
 });

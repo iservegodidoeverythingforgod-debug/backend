@@ -70,4 +70,24 @@ export class OrdersController {
     return this.ordersService.updateStatus(id, dto, adminId);
   }
 
+  @Get(':id/receipt')
+  @ApiOperation({ summary: 'Get dynamic receipt data for a paid order' })
+  async getReceipt(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.ordersService.getReceipt(id, user);
+  }
+
+  @Post(':id/send-receipt')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Admin approves & sends receipt email to customer' })
+  async sendReceipt(
+    @Param('id') id: string,
+    @CurrentUser('id') adminId: string,
+    @Body('email') email?: string,
+  ) {
+    return this.ordersService.sendReceipt(id, adminId, email);
+  }
 }

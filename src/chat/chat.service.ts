@@ -58,6 +58,21 @@ export class ChatService {
       const now = new Date();
 
       if (!conversation) {
+        // If customer has a CLOSED conversation, block starting a new conversation until admin reopens or deletes it
+        const closedConversation = await em.findOne(ChatConversation, {
+          where: {
+            customer_id: customerId,
+            status: ConversationStatus.CLOSED,
+          },
+          order: { updated_at: 'DESC' },
+        });
+
+        if (closedConversation) {
+          throw new BadRequestException(
+            'Your support conversation has been closed. Please wait for the admin to reopen or delete the conversation before starting a new chat.',
+          );
+        }
+
         conversation = em.create(ChatConversation, {
           customer_id: customerId,
           status: ConversationStatus.OPEN,
@@ -207,7 +222,7 @@ export class ChatService {
     // Reject message sending if conversation is closed
     if (conversation.status === ConversationStatus.CLOSED) {
       throw new BadRequestException(
-        'This conversation is closed and no longer accepting messages. Please start a new conversation.',
+        'This conversation is closed and no longer accepting messages. Please wait for the admin to reopen or delete the conversation.',
       );
     }
 

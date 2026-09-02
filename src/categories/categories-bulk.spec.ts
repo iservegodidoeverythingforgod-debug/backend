@@ -72,5 +72,32 @@ describe('CategoriesService - Bulk Delete', () => {
       expect(mockEntityManager.delete).toHaveBeenCalledTimes(2);
     });
   });
+
+  describe('create and update', () => {
+    it('should create category cleanly with trimmed name', async () => {
+      mockCategoryRepo.findOne = jest.fn().mockResolvedValue(null);
+      mockCategoryRepo.create = jest.fn().mockImplementation((dto) => dto);
+      mockCategoryRepo.save = jest.fn().mockImplementation((cat) => Promise.resolve({ id: 'cat-new', ...cat }));
+
+      const res = await service.create({ name: '  Microgreens  ', description: 'Fresh sprouts', icon: 'spa' });
+
+      expect(res.name).toBe('Microgreens');
+      expect(mockCategoryRepo.save).toHaveBeenCalledWith(expect.objectContaining({ name: 'Microgreens', icon: 'spa' }));
+    });
+
+    it('should update category cleanly without modifying unrelated fields', async () => {
+      const existing = { id: 'cat-1', name: 'Herbs', description: 'Old desc', icon: 'eco' };
+      mockCategoryRepo.findOne = jest.fn()
+        .mockResolvedValueOnce(existing) // find by id
+        .mockResolvedValueOnce(null); // find duplicate check
+      mockCategoryRepo.save = jest.fn().mockImplementation((cat) => Promise.resolve(cat));
+
+      const updated = await service.update('cat-1', { name: 'Culinary Herbs', description: 'Updated desc' });
+
+      expect(updated.name).toBe('Culinary Herbs');
+      expect(updated.description).toBe('Updated desc');
+      expect(mockCategoryRepo.save).toHaveBeenCalled();
+    });
+  });
 });
 

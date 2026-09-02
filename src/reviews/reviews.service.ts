@@ -2,9 +2,11 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, IsNull } from 'typeorm';
 import { Review } from '../database/entities/review.entity';
 import { Product } from '../database/entities/product.entity';
 import { Order } from '../database/entities/order.entity';
@@ -28,7 +30,7 @@ export class ReviewsService {
     let product: Product | null = null;
     let finalOrderId: string | null = null;
 
-    // 1. If an orderId is provided, validate order and enforce single review per order
+    // 1. If an orderId is provided, validate order and enforce per-product review within order
     if (rawOrderId.length > 0) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawOrderId);
       if (isUuid) {
@@ -37,21 +39,35 @@ export class ReviewsService {
           relations: ['items'],
         });
 
-        if (order) {
-          finalOrderId = order.id;
+        if (!order) {
+          throw new NotFoundException(`Order ${rawOrderId} not found`);
+        }
 
-          // Check if customer already submitted a review for this order
-          const existingOrderReview = await this.reviewRepository.findOne({
-            where: { order_id: finalOrderId, user_id: userId },
-          });
+        if (order.user_id !== userId) {
+          throw new ForbiddenException('You do not have permission to review this order');
+        }
 
-          if (existingOrderReview) {
-            throw new ConflictException('You have already submitted a review for this order.');
+        finalOrderId = order.id;
+
+        // Try finding the specific product from order items by ID
+        if (rawProdId.length > 0) {
+          const matchedItem = (order.items || []).find(
+            (i) => i.product_id === rawProdId || i.product_name.toLowerCase() === rawProdId.toLowerCase(),
+          );
+          if (matchedItem && matchedItem.product_id) {
+            product = await this.productRepository.findOne({
+              where: { id: matchedItem.product_id },
+            });
           }
+        }
 
-          // If product wasn't explicitly matched, try extracting from order items
-          if (!product && order.items && order.items.length > 0) {
-            const matchedItem = order.items.find((i) => i.product_id === rawProdId) || order.items[0];
+        // If not matched yet, check by product name from DTO
+        if (!product) {
+          const prodName = (dto.productName || dto.product_name || '').trim();
+          if (prodName.length > 0) {
+            const matchedItem = (order.items || []).find(
+              (i) => i.product_name.toLowerCase() === prodName.toLowerCase(),
+            );
             if (matchedItem && matchedItem.product_id) {
               product = await this.productRepository.findOne({
                 where: { id: matchedItem.product_id },
@@ -59,10 +75,34 @@ export class ReviewsService {
             }
           }
         }
+
+        // If only 1 item in order and no product specified, fallback to that single item
+        if (!product && order.items && order.items.length === 1 && order.items[0].product_id) {
+          product = await this.productRepository.findOne({
+            where: { id: order.items[0].product_id },
+          });
+        }
+
+        if (!product) {
+          throw new BadRequestException('Please specify a valid product from this order to review.');
+        }
+
+        // Check if customer already submitted a review for THIS specific product in this order
+        const existingItemReview = await this.reviewRepository.findOne({
+          where: {
+            order_id: finalOrderId,
+            product_id: product.id,
+            user_id: userId,
+          },
+        });
+
+        if (existingItemReview) {
+          throw new ConflictException('You have already submitted a review for this product in this order.');
+        }
       }
     }
 
-    // 2. Try finding product by ID if provided and not yet found
+    // 2. Try finding product by ID if not in order context
     if (!product && rawProdId.length > 0) {
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawProdId);
       if (isUuid) {
@@ -72,7 +112,7 @@ export class ReviewsService {
       }
     }
 
-    // 3. Fallback: Search by product name if ID didn't match
+    // 3. Fallback search by product name
     if (!product) {
       const prodName = (dto.productName || dto.product_name || rawProdId).trim();
       if (prodName.length > 0) {
@@ -89,8 +129,8 @@ export class ReviewsService {
       }
     }
 
-    // 4. Fallback: If still not found, link to the first active product
-    if (!product) {
+    // 4. Fallback: If still not found and no order, link to first active product
+    if (!product && !finalOrderId) {
       product = await this.productRepository.findOne({
         where: { is_active: true },
       });
@@ -102,14 +142,14 @@ export class ReviewsService {
 
     const finalProductId = product.id;
 
-    // Check if user already reviewed without order_id
+    // Check if user already reviewed without order_id (standalone product review)
     if (!finalOrderId) {
       const existing = await this.reviewRepository.findOne({
-        where: { product_id: finalProductId, user_id: userId },
+        where: { product_id: finalProductId, user_id: userId, order_id: IsNull() },
       });
 
       if (existing) {
-        existing.rating = Number(dto.rating) || 5;
+        existing.rating = Math.min(Math.max(Number(dto.rating) || 5, 1), 5);
         existing.comment = dto.comment;
         return this.reviewRepository.save(existing);
       }
@@ -119,7 +159,7 @@ export class ReviewsService {
       order_id: finalOrderId,
       product_id: finalProductId,
       user_id: userId,
-      rating: Number(dto.rating) || 5,
+      rating: Math.min(Math.max(Number(dto.rating) || 5, 1), 5),
       comment: dto.comment,
     });
 

@@ -38,10 +38,17 @@ export class ProductsService {
       qb.andWhere('product.is_active = :active', { active: true });
     }
 
-    if (params?.categoryId) {
-      qb.andWhere('product.category_id = :categoryId', {
-        categoryId: params.categoryId,
-      });
+    if (
+      params?.categoryId &&
+      params.categoryId.trim() !== '' &&
+      params.categoryId !== 'null' &&
+      params.categoryId !== 'ALL'
+    ) {
+      const catFilter = params.categoryId.trim();
+      qb.andWhere(
+        '(product.category_id = :catFilter OR category.id = :catFilter OR LOWER(category.name) = LOWER(:catFilter))',
+        { catFilter },
+      );
     }
 
     if (params?.difficulty) {
