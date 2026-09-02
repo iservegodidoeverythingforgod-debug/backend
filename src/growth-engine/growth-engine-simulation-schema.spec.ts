@@ -9,7 +9,6 @@ import { Product } from '../database/entities/product.entity';
 import { AnimationAsset } from '../database/entities/animation-asset.entity';
 import { SupabaseStorageService } from '../common/storage/supabase-storage.service';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
 
 describe('GrowthEngineService - Input Schema & Stage Initial Inputs Validation', () => {
   let service: GrowthEngineService;
@@ -54,7 +53,6 @@ describe('GrowthEngineService - Input Schema & Stage Initial Inputs Validation',
         { provide: getRepositoryToken(AnimationAsset), useValue: mockAnimationAssetRepo },
         { provide: SupabaseStorageService, useValue: {} },
         { provide: StorageCleanupService, useValue: {} },
-        { provide: AuditLogService, useValue: { logAction: jest.fn() } },
       ],
     }).compile();
 

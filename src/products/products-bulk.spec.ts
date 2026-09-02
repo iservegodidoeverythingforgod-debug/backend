@@ -3,24 +3,17 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ProductsService } from './products.service';
 import { Product } from '../database/entities/product.entity';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 describe('ProductsService - Bulk & Storage Cleanup', () => {
   let service: ProductsService;
   let mockProductRepo: any;
   let mockStorageCleanupService: Partial<StorageCleanupService>;
-  let mockAuditLogService: Partial<AuditLogService>;
   let mockEntityManager: any;
 
   beforeEach(async () => {
     mockStorageCleanupService = {
       deleteFileByUrl: jest.fn().mockResolvedValue(true),
       deleteFilesByUrls: jest.fn().mockResolvedValue({ deleted: 2, failed: 0 }),
-    };
-
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
     };
 
     mockEntityManager = {
@@ -49,10 +42,6 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
         {
           provide: StorageCleanupService,
           useValue: mockStorageCleanupService,
-        },
-        {
-          provide: AuditLogService,
-          useValue: mockAuditLogService,
         },
       ],
     }).compile();
@@ -103,7 +92,7 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
   });
 
   describe('bulkRemove', () => {
-    it('should delete multiple products in a transaction, log audit, and cleanup all image files', async () => {
+    it('should delete multiple products in a transaction and cleanup all image files', async () => {
       const ids = ['prod-1', 'prod-2'];
       const existingProducts = [
         {
@@ -129,16 +118,6 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
       expect(result.failedCount).toBe(0);
       expect(mockEntityManager.delete).toHaveBeenCalledTimes(2);
 
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adminId: 'admin-uuid-1',
-          action: 'BULK_DELETE_PRODUCTS',
-          targetType: 'products',
-          targetIds: ['prod-1', 'prod-2'],
-          status: AuditStatus.SUCCESS,
-        }),
-      );
-
       expect(mockStorageCleanupService.deleteFilesByUrls).toHaveBeenCalledWith([
         'https://test.supabase.co/storage/v1/object/public/products/p1.jpg',
         'https://test.supabase.co/storage/v1/object/public/products/p2.jpg',
@@ -157,12 +136,7 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
       expect(result.succeededCount).toBe(1);
       expect(result.failedCount).toBe(1);
       expect(result.failedItems[0].id).toBe('prod-missing');
-
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          status: AuditStatus.PARTIAL,
-        }),
-      );
     });
   });
 });
+

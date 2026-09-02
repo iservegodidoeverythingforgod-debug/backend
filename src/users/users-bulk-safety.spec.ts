@@ -10,7 +10,6 @@ import { ChatConversation } from '../database/entities/chat-conversation.entity'
 import { ChatMessage } from '../database/entities/chat-message.entity';
 import { Payment } from '../database/entities/payment.entity';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { Role } from '../common/enums';
 import { BadRequestException } from '@nestjs/common';
 
@@ -19,7 +18,6 @@ describe('UsersService - Bulk Delete Safety Guards & Storage Cleanup', () => {
   let mockUserRepo: any;
   let mockRefreshTokenRepo: any;
   let mockStorageCleanupService: Partial<StorageCleanupService>;
-  let mockAuditLogService: Partial<AuditLogService>;
   let mockEntityManager: any;
   let mockQueryBuilder: any;
 
@@ -27,10 +25,6 @@ describe('UsersService - Bulk Delete Safety Guards & Storage Cleanup', () => {
     mockStorageCleanupService = {
       deleteFileByUrl: jest.fn().mockResolvedValue(true),
       deleteFilesByUrls: jest.fn().mockResolvedValue({ deleted: 1, failed: 0 }),
-    };
-
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
     };
 
     mockQueryBuilder = {
@@ -98,10 +92,6 @@ describe('UsersService - Bulk Delete Safety Guards & Storage Cleanup', () => {
         {
           provide: StorageCleanupService,
           useValue: mockStorageCleanupService,
-        },
-        {
-          provide: AuditLogService,
-          useValue: mockAuditLogService,
         },
       ],
     }).compile();
@@ -196,16 +186,6 @@ describe('UsersService - Bulk Delete Safety Guards & Storage Cleanup', () => {
       expect(mockStorageCleanupService.deleteFilesByUrls).toHaveBeenCalledWith([
         'https://test.supabase.co/storage/v1/object/public/avatars/c1.png',
       ]);
-
-      // Verify audit log
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adminId: actingAdminId,
-          action: 'BULK_DELETE_USERS',
-          targetType: 'users',
-          targetIds: ['cust-1', 'cust-2'],
-        }),
-      );
     });
   });
 });

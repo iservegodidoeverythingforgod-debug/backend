@@ -13,7 +13,6 @@ import { RolesGuard } from '../guards/roles.guard';
 import { Roles } from '../decorators/roles.decorator';
 import { Role } from '../enums';
 import { CurrentUser } from '../decorators/current-user.decorator';
-import { AuditLogService } from '../audit/audit-log.service';
 
 @ApiTags('Admin Storage Management')
 @Controller('admin/storage')
@@ -23,7 +22,6 @@ import { AuditLogService } from '../audit/audit-log.service';
 export class StorageController {
   constructor(
     private readonly storageCleanupService: StorageCleanupService,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   @Get('orphans')
@@ -44,14 +42,6 @@ export class StorageController {
     }
 
     const result = await this.storageCleanupService.cleanConfirmedOrphans(items);
-
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'CLEAN_ORPHANED_STORAGE_FILES',
-      targetType: 'storage_objects',
-      targetIds: items.map((i) => `${i.bucket}/${i.key}`),
-      details: { deletedCount: result.deleted.length, failedCount: result.failed.length },
-    });
 
     return {
       success: true,

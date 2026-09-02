@@ -11,7 +11,6 @@ import { Order } from '../database/entities/order.entity';
 import { OrderItem } from '../database/entities/order-item.entity';
 import { Review } from '../database/entities/review.entity';
 import { StorageCleanupService } from './storage/storage-cleanup.service';
-import { AuditLogService } from './audit/audit-log.service';
 
 describe('Phase 2 Runtime Optimizations - Response Shape Regression Suite', () => {
   let productsService: ProductsService;
@@ -174,10 +173,6 @@ describe('Phase 2 Runtime Optimizations - Response Shape Regression Suite', () =
         {
           provide: StorageCleanupService,
           useValue: { deleteFileByUrl: jest.fn(), deleteFilesByUrls: jest.fn() },
-        },
-        {
-          provide: AuditLogService,
-          useValue: { logAction: jest.fn().mockResolvedValue({} as any) },
         },
       ],
     }).compile();

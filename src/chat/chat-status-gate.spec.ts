@@ -11,19 +11,13 @@ import {
   SenderType,
 } from '../database/entities/chat-message.entity';
 import { User } from '../database/entities/user.entity';
-import { AuditLogService } from '../common/audit/audit-log.service';
 
 describe('ChatService - Conversation Status Gate (CLOSED vs OPEN)', () => {
   let service: ChatService;
   let mockConvRepo: any;
   let mockMsgRepo: any;
-  let mockAuditLogService: Partial<AuditLogService>;
 
   beforeEach(async () => {
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
-    };
-
     mockConvRepo = {
       findOne: jest.fn(),
       save: jest.fn().mockImplementation((c) => Promise.resolve(c)),
@@ -51,7 +45,6 @@ describe('ChatService - Conversation Status Gate (CLOSED vs OPEN)', () => {
         { provide: getRepositoryToken(ChatConversation), useValue: mockConvRepo },
         { provide: getRepositoryToken(ChatMessage), useValue: mockMsgRepo },
         { provide: getRepositoryToken(User), useValue: {} },
-        { provide: AuditLogService, useValue: mockAuditLogService },
       ],
     }).compile();
 

@@ -4,22 +4,15 @@ import { ReviewsService } from './reviews.service';
 import { Review } from '../database/entities/review.entity';
 import { Product } from '../database/entities/product.entity';
 import { Order } from '../database/entities/order.entity';
-import { AuditLogService } from '../common/audit/audit-log.service';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 describe('ReviewsService - Bulk Delete', () => {
   let service: ReviewsService;
   let mockReviewRepo: any;
   let mockProductRepo: any;
   let mockOrderRepo: any;
-  let mockAuditLogService: Partial<AuditLogService>;
   let mockEntityManager: any;
 
   beforeEach(async () => {
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
-    };
-
     mockEntityManager = {
       find: jest.fn(),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
@@ -53,10 +46,6 @@ describe('ReviewsService - Bulk Delete', () => {
           provide: getRepositoryToken(Order),
           useValue: mockOrderRepo,
         },
-        {
-          provide: AuditLogService,
-          useValue: mockAuditLogService,
-        },
       ],
     }).compile();
 
@@ -64,7 +53,7 @@ describe('ReviewsService - Bulk Delete', () => {
   });
 
   describe('bulkRemove', () => {
-    it('should bulk delete reviews and record audit log', async () => {
+    it('should bulk delete reviews', async () => {
       const ids = ['rev-1', 'rev-2'];
       mockEntityManager.find.mockResolvedValueOnce([
         { id: 'rev-1', rating: 5, comment: 'Great basil' },
@@ -77,16 +66,7 @@ describe('ReviewsService - Bulk Delete', () => {
       expect(result.succeededCount).toBe(2);
       expect(result.failedCount).toBe(0);
       expect(mockEntityManager.delete).toHaveBeenCalledTimes(2);
-
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adminId: 'admin-1',
-          action: 'BULK_DELETE_REVIEWS',
-          targetType: 'reviews',
-          targetIds: ['rev-1', 'rev-2'],
-          status: AuditStatus.SUCCESS,
-        }),
-      );
     });
   });
 });
+

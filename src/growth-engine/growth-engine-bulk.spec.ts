@@ -8,14 +8,11 @@ import { Product } from '../database/entities/product.entity';
 import { AnimationAsset } from '../database/entities/animation-asset.entity';
 import { SupabaseStorageService } from '../common/storage/supabase-storage.service';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 describe('GrowthEngineService - Bulk Animations & Storage Cleanup', () => {
   let service: GrowthEngineService;
   let mockAnimationAssetRepo: any;
   let mockStorageCleanupService: Partial<StorageCleanupService>;
-  let mockAuditLogService: Partial<AuditLogService>;
   let mockEntityManager: any;
 
   let mockRuleRepo: any;
@@ -25,10 +22,6 @@ describe('GrowthEngineService - Bulk Animations & Storage Cleanup', () => {
     mockStorageCleanupService = {
       deleteFileByUrl: jest.fn().mockResolvedValue(true),
       deleteFilesByUrls: jest.fn().mockResolvedValue({ deleted: 2, failed: 0 }),
-    };
-
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
     };
 
     mockEntityManager = {
@@ -92,10 +85,6 @@ describe('GrowthEngineService - Bulk Animations & Storage Cleanup', () => {
           provide: StorageCleanupService,
           useValue: mockStorageCleanupService,
         },
-        {
-          provide: AuditLogService,
-          useValue: mockAuditLogService,
-        },
       ],
     }).compile();
 
@@ -120,7 +109,7 @@ describe('GrowthEngineService - Bulk Animations & Storage Cleanup', () => {
   });
 
   describe('bulkDeleteAnimations', () => {
-    it('should bulk delete animation assets, record audit log, and clean up files', async () => {
+    it('should bulk delete animation assets and clean up files', async () => {
       const ids = ['anim-1', 'anim-2'];
       mockEntityManager.find.mockResolvedValueOnce([
         { id: 'anim-1', file_url: 'https://test.supabase.co/storage/v1/object/public/animations/a1.json' },
@@ -132,16 +121,6 @@ describe('GrowthEngineService - Bulk Animations & Storage Cleanup', () => {
       expect(result.totalRequested).toBe(2);
       expect(result.succeededCount).toBe(2);
       expect(result.failedCount).toBe(0);
-
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adminId: 'admin-1',
-          action: 'BULK_DELETE_ANIMATION_ASSETS',
-          targetType: 'animation_assets',
-          targetIds: ['anim-1', 'anim-2'],
-          status: AuditStatus.SUCCESS,
-        }),
-      );
 
       expect(mockStorageCleanupService.deleteFilesByUrls).toHaveBeenCalledWith([
         'https://test.supabase.co/storage/v1/object/public/animations/a1.json',

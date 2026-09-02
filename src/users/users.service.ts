@@ -11,9 +11,7 @@ import { RefreshToken } from '../database/entities/refresh-token.entity';
 import { Role } from '../common/enums';
 import { DELETED_USER_ID, DELETED_USER_EMAIL, DELETED_USER_NAME } from '../common/constants';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class UsersService {
@@ -35,7 +33,6 @@ export class UsersService {
     @InjectRepository(RefreshToken)
     private refreshTokenRepository: Repository<RefreshToken>,
     private readonly storageCleanupService: StorageCleanupService,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(role?: Role, search?: string) {
@@ -357,27 +354,6 @@ export class UsersService {
         this.logger.warn(`Storage cleanup failed for bulk deleted user avatars: ${err}`);
       });
     }
-
-    const auditStatus =
-      failedItems.length === 0
-        ? AuditStatus.SUCCESS
-        : succeededIds.length > 0
-        ? AuditStatus.PARTIAL
-        : AuditStatus.FAILED;
-
-    await this.auditLogService.logAction({
-      adminId: actingAdminId,
-      action: 'BULK_DELETE_USERS',
-      targetType: 'users',
-      targetIds: succeededIds,
-      details: {
-        totalRequested: ids.length,
-        succeededCount: succeededIds.length,
-        failedCount: failedItems.length,
-        failedItems,
-      },
-      status: auditStatus,
-    });
 
     return {
       totalRequested: ids.length,

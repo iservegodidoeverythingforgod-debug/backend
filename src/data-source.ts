@@ -17,7 +17,6 @@ import {
   ChatMessage,
   AnimationAsset,
   StoreSetting,
-  AuditLog,
   PendingRegistration,
 } from './database/entities';
 
@@ -48,7 +47,6 @@ const AppDataSource = new DataSource({
     ChatMessage,
     AnimationAsset,
     StoreSetting,
-    AuditLog,
     PendingRegistration,
   ],
   migrations: [path.join(__dirname, 'database/migrations/*{.ts,.js}')],

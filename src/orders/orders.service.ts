@@ -156,9 +156,49 @@ export class OrdersService {
     return order;
   }
 
-  async updateStatus(id: string, dto: UpdateOrderStatusDto) {
+  async updateStatus(id: string, dto: UpdateOrderStatusDto, adminId?: string) {
     const order = await this.findOne(id);
+    const oldStatus = order.status;
     order.status = dto.status;
-    return this.orderRepository.save(order);
+    const savedOrder = await this.orderRepository.save(order);
+
+    // Synchronize payment status and audit trail
+    if (order.payment) {
+      let paymentUpdated = false;
+      const payment = order.payment;
+
+      if (dto.status === OrderStatus.PAID_CONFIRMED || dto.status === OrderStatus.SHIPPED || dto.status === OrderStatus.DELIVERED) {
+        if (payment.status !== PaymentStatus.VERIFIED) {
+          payment.status = PaymentStatus.VERIFIED;
+          payment.verified_at = new Date();
+          payment.verified_by = adminId || payment.verified_by;
+          paymentUpdated = true;
+        }
+      } else if (dto.status === OrderStatus.CANCELLED) {
+        if (payment.status !== PaymentStatus.REJECTED) {
+          payment.status = PaymentStatus.REJECTED;
+          payment.verified_at = new Date();
+          payment.verified_by = adminId || payment.verified_by;
+          paymentUpdated = true;
+        }
+      } else if (dto.status === OrderStatus.PENDING_PAYMENT) {
+        if (payment.status !== PaymentStatus.PENDING_SUBMISSION) {
+          payment.status = PaymentStatus.PENDING_SUBMISSION;
+          paymentUpdated = true;
+        }
+      }
+
+      if (dto.notes) {
+        payment.notes = dto.notes;
+        paymentUpdated = true;
+      }
+
+      if (paymentUpdated) {
+        await this.paymentRepository.save(payment);
+      }
+    }
+
+    return this.findOne(id);
   }
 }
+

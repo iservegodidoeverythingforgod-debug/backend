@@ -16,7 +16,6 @@ import { SettingsModule } from './settings/settings.module';
 import { SupabaseStorageModule } from './common/storage/supabase-storage.module';
 import { GrowthEngineModule } from './growth-engine/growth-engine.module';
 import { HealthController } from './health/health.controller';
-import { AuditModule } from './common/audit/audit.module';
 import {
   User,
   RefreshToken,
@@ -33,7 +32,6 @@ import {
   ChatMessage,
   AnimationAsset,
   StoreSetting,
-  AuditLog,
   PendingRegistration,
 } from './database/entities';
 
@@ -76,7 +74,6 @@ import { RolesGuard } from './common/guards/roles.guard';
           ChatMessage,
           AnimationAsset,
           StoreSetting,
-          AuditLog,
           PendingRegistration,
         ];
 
@@ -114,7 +111,6 @@ import { RolesGuard } from './common/guards/roles.guard';
         };
       },
     }),
-    AuditModule,
     SupabaseStorageModule,
     AuthModule,
     UsersModule,

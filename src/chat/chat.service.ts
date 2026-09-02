@@ -16,9 +16,7 @@ import {
 } from '../database/entities/chat-message.entity';
 import { User } from '../database/entities/user.entity';
 import { CreateConversationDto, SendMessageDto } from './dto';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class ChatService {
@@ -29,7 +27,6 @@ export class ChatService {
     private readonly msgRepo: Repository<ChatMessage>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   // ==========================================
@@ -494,14 +491,6 @@ export class ChatService {
 
     await this.convRepo.delete(conversationId);
 
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'DELETE_CHAT_CONVERSATION',
-      targetType: 'chat_conversations',
-      targetIds: [conversationId],
-      status: AuditStatus.SUCCESS,
-    });
-
     return {
       success: true,
       message: `Conversation ${conversationId} deleted successfully`,
@@ -539,27 +528,6 @@ export class ChatService {
           });
         }
       }
-    });
-
-    const auditStatus =
-      failedItems.length === 0
-        ? AuditStatus.SUCCESS
-        : succeededIds.length > 0
-        ? AuditStatus.PARTIAL
-        : AuditStatus.FAILED;
-
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'BULK_DELETE_CHAT_CONVERSATIONS',
-      targetType: 'chat_conversations',
-      targetIds: succeededIds,
-      details: {
-        totalRequested: ids.length,
-        succeededCount: succeededIds.length,
-        failedCount: failedItems.length,
-        failedItems,
-      },
-      status: auditStatus,
     });
 
     return {

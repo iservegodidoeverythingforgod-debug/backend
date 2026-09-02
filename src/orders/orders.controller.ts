@@ -64,8 +64,10 @@ export class OrdersController {
   @ApiOperation({ summary: 'Update order status (Admin only)' })
   async updateStatus(
     @Param('id') id: string,
+    @CurrentUser('id') adminId: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    return this.ordersService.updateStatus(id, dto);
+    return this.ordersService.updateStatus(id, dto, adminId);
   }
+
 }

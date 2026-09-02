@@ -25,9 +25,7 @@ import {
 } from './dto';
 import { SupabaseStorageService } from '../common/storage/supabase-storage.service';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 import { extname } from 'path';
 import { randomUUID } from 'crypto';
 
@@ -85,7 +83,6 @@ export class GrowthEngineService {
     private readonly animationAssetRepository: Repository<AnimationAsset>,
     private readonly supabaseStorageService: SupabaseStorageService,
     private readonly storageCleanupService: StorageCleanupService,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   // ===========================================================================
@@ -882,27 +879,6 @@ export class GrowthEngineService {
         this.logger.warn(`Storage cleanup failed for bulk deleted animations: ${err}`);
       });
     }
-
-    const auditStatus =
-      failedItems.length === 0
-        ? AuditStatus.SUCCESS
-        : succeededIds.length > 0
-        ? AuditStatus.PARTIAL
-        : AuditStatus.FAILED;
-
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'BULK_DELETE_ANIMATION_ASSETS',
-      targetType: 'animation_assets',
-      targetIds: succeededIds,
-      details: {
-        totalRequested: ids.length,
-        succeededCount: succeededIds.length,
-        failedCount: failedItems.length,
-        failedItems,
-      },
-      status: auditStatus,
-    });
 
     return {
       totalRequested: ids.length,

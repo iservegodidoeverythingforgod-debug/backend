@@ -3,22 +3,15 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { CategoriesService } from './categories.service';
 import { Category } from '../database/entities/category.entity';
 import { Product } from '../database/entities/product.entity';
-import { AuditLogService } from '../common/audit/audit-log.service';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 describe('CategoriesService - Bulk Delete', () => {
   let service: CategoriesService;
   let mockCategoryRepo: any;
   let mockProductRepo: any;
-  let mockAuditLogService: Partial<AuditLogService>;
   let mockEntityManager: any;
   let mockQueryBuilder: any;
 
   beforeEach(async () => {
-    mockAuditLogService = {
-      logAction: jest.fn().mockResolvedValue({} as any),
-    };
-
     mockQueryBuilder = {
       update: jest.fn().mockReturnThis(),
       set: jest.fn().mockReturnThis(),
@@ -58,10 +51,6 @@ describe('CategoriesService - Bulk Delete', () => {
           provide: getRepositoryToken(Product),
           useValue: mockProductRepo,
         },
-        {
-          provide: AuditLogService,
-          useValue: mockAuditLogService,
-        },
       ],
     }).compile();
 
@@ -69,7 +58,7 @@ describe('CategoriesService - Bulk Delete', () => {
   });
 
   describe('bulkRemove', () => {
-    it('should nullify category_id on child products, delete categories, and log audit', async () => {
+    it('should nullify category_id on child products and delete categories', async () => {
       const ids = ['cat-1', 'cat-2'];
 
       const result = await service.bulkRemove(ids, 'admin-1');
@@ -81,17 +70,7 @@ describe('CategoriesService - Bulk Delete', () => {
       // Verify product FK nullification
       expect(mockEntityManager.update).toHaveBeenCalledTimes(2);
       expect(mockEntityManager.delete).toHaveBeenCalledTimes(2);
-
-      // Verify audit log
-      expect(mockAuditLogService.logAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          adminId: 'admin-1',
-          action: 'BULK_DELETE_CATEGORIES',
-          targetType: 'categories',
-          targetIds: ['cat-1', 'cat-2'],
-          status: AuditStatus.SUCCESS,
-        }),
-      );
     });
   });
 });
+

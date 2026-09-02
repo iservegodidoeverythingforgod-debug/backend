@@ -80,4 +80,10 @@ export class UpdateOrderStatusDto {
   @ApiProperty({ enum: OrderStatus })
   @IsEnum(OrderStatus)
   status: OrderStatus;
+
+  @ApiPropertyOptional({ example: 'Payment verified manually by admin' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
+

@@ -9,9 +9,7 @@ import { Review } from '../database/entities/review.entity';
 import { Product } from '../database/entities/product.entity';
 import { Order } from '../database/entities/order.entity';
 import { CreateReviewDto } from './dto';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class ReviewsService {
@@ -22,7 +20,6 @@ export class ReviewsService {
     private productRepository: Repository<Product>,
     @InjectRepository(Order)
     private orderRepository: Repository<Order>,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(userId: string, dto: CreateReviewDto) {
@@ -188,27 +185,6 @@ export class ReviewsService {
           });
         }
       }
-    });
-
-    const auditStatus =
-      failedItems.length === 0
-        ? AuditStatus.SUCCESS
-        : succeededIds.length > 0
-        ? AuditStatus.PARTIAL
-        : AuditStatus.FAILED;
-
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'BULK_DELETE_REVIEWS',
-      targetType: 'reviews',
-      targetIds: succeededIds,
-      details: {
-        totalRequested: ids.length,
-        succeededCount: succeededIds.length,
-        failedCount: failedItems.length,
-        failedItems,
-      },
-      status: auditStatus,
     });
 
     return {

@@ -4,9 +4,7 @@ import { Repository, In } from 'typeorm';
 import { Product } from '../database/entities/product.entity';
 import { CreateProductDto, UpdateProductDto } from './dto';
 import { StorageCleanupService } from '../common/storage/storage-cleanup.service';
-import { AuditLogService } from '../common/audit/audit-log.service';
 import { BulkDeleteResult, FailedItem } from '../common/dto/bulk-delete.dto';
-import { AuditStatus } from '../database/entities/audit-log.entity';
 
 @Injectable()
 export class ProductsService {
@@ -16,7 +14,6 @@ export class ProductsService {
     @InjectRepository(Product)
     private productRepository: Repository<Product>,
     private readonly storageCleanupService: StorageCleanupService,
-    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(params?: {
@@ -259,27 +256,6 @@ export class ProductsService {
         this.logger.warn(`Storage cleanup failed for bulk deleted products: ${err}`);
       });
     }
-
-    const auditStatus =
-      failedItems.length === 0
-        ? AuditStatus.SUCCESS
-        : succeededIds.length > 0
-        ? AuditStatus.PARTIAL
-        : AuditStatus.FAILED;
-
-    await this.auditLogService.logAction({
-      adminId,
-      action: 'BULK_DELETE_PRODUCTS',
-      targetType: 'products',
-      targetIds: succeededIds,
-      details: {
-        totalRequested: ids.length,
-        succeededCount: succeededIds.length,
-        failedCount: failedItems.length,
-        failedItems,
-      },
-      status: auditStatus,
-    });
 
     return {
       totalRequested: ids.length,
