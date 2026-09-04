@@ -228,7 +228,13 @@ export class ProductsService {
   }
 
   async update(id: string, dto: UpdateProductDto) {
-    const product = await this.findOne(id);
+    const product = await this.productRepository.findOne({
+      where: { id },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${id} not found`);
+    }
 
     if (dto.price !== undefined && Number(dto.price) < 0) {
       throw new BadRequestException('Price cannot be negative');
@@ -241,22 +247,27 @@ export class ProductsService {
     }
 
     // Clean up old thumbnail if changed
-    if (dto.image_url && product.image_url && dto.image_url !== product.image_url) {
+    if (dto.image_url !== undefined && product.image_url && dto.image_url !== product.image_url) {
       this.storageCleanupService.deleteFileByUrl(product.image_url);
     }
 
     // Explicitly synchronize relation foreign keys so TypeORM does not revert to old relations
-    if ('category_id' in dto) {
+    if ('category_id' in dto && dto.category_id !== undefined) {
       product.category_id = dto.category_id ? dto.category_id.trim() : (null as any);
       product.category = null as any;
     }
 
-    if ('rule_id' in dto) {
+    if ('rule_id' in dto && dto.rule_id !== undefined) {
       product.rule_id = dto.rule_id ? dto.rule_id.trim() : (null as any);
       product.growth_rule = null as any;
     }
 
-    Object.assign(product, dto);
+    for (const [key, value] of Object.entries(dto)) {
+      if (value !== undefined && key !== 'category_id' && key !== 'rule_id') {
+        (product as any)[key] = value;
+      }
+    }
+
     await this.productRepository.save(product);
     return this.findOne(id);
   }
