@@ -220,11 +220,19 @@ export class ProductsService {
       throw new BadRequestException('Germination days must be greater than 0');
     }
 
+    const cleanCatId = dto.category_id && dto.category_id.trim() !== '' ? dto.category_id.trim() : null;
+    const cleanRuleId = dto.rule_id && dto.rule_id.trim() !== '' ? dto.rule_id.trim() : null;
+
     const product = this.productRepository.create({
       ...dto,
+      category_id: cleanCatId as any,
+      category: cleanCatId ? ({ id: cleanCatId } as any) : (null as any),
+      rule_id: cleanRuleId as any,
+      growth_rule: cleanRuleId ? ({ id: cleanRuleId } as any) : (null as any),
       germination_days: dto.germination_days ?? 7,
     });
-    return this.productRepository.save(product);
+    const saved = await this.productRepository.save(product);
+    return this.findOne(saved.id);
   }
 
   async update(id: string, dto: UpdateProductDto) {
@@ -253,13 +261,25 @@ export class ProductsService {
 
     // Explicitly synchronize relation foreign keys so TypeORM does not revert to old relations
     if ('category_id' in dto && dto.category_id !== undefined) {
-      product.category_id = dto.category_id ? dto.category_id.trim() : (null as any);
-      product.category = null as any;
+      if (dto.category_id && dto.category_id.trim() !== '') {
+        const cleanCatId = dto.category_id.trim();
+        product.category_id = cleanCatId;
+        product.category = { id: cleanCatId } as any;
+      } else {
+        product.category_id = null as any;
+        product.category = null as any;
+      }
     }
 
     if ('rule_id' in dto && dto.rule_id !== undefined) {
-      product.rule_id = dto.rule_id ? dto.rule_id.trim() : (null as any);
-      product.growth_rule = null as any;
+      if (dto.rule_id && dto.rule_id.trim() !== '') {
+        const cleanRuleId = dto.rule_id.trim();
+        product.rule_id = cleanRuleId;
+        product.growth_rule = { id: cleanRuleId } as any;
+      } else {
+        product.rule_id = null as any;
+        product.growth_rule = null as any;
+      }
     }
 
     for (const [key, value] of Object.entries(dto)) {

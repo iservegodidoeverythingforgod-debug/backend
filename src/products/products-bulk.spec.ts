@@ -224,5 +224,88 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
       expect(result.total).toBe(1);
     });
   });
+
+  describe('update (Relation Foreign Key Preservation)', () => {
+    it('should set category and growth_rule relations as objects with id rather than null', async () => {
+      const existingProduct = {
+        id: 'prod-uuid-1',
+        name: 'Hemp RPF1',
+        category_id: 'c-old',
+        category: { id: 'c-old', name: 'Old Category' },
+        rule_id: 'r-old',
+        growth_rule: { id: 'r-old', name: 'Old Rule' },
+        price: 150,
+        stock: 10,
+        harvest_days: 100,
+        germination_days: 14,
+      };
+
+      mockProductRepo.findOne = jest.fn()
+        .mockResolvedValueOnce(existingProduct)
+        .mockResolvedValueOnce({
+          ...existingProduct,
+          category_id: 'c-new',
+          category: { id: 'c-new', name: 'New Category' },
+          rule_id: 'r-new',
+          growth_rule: { id: 'r-new', name: 'New Rule' },
+          stock: 20,
+        });
+
+      const updated = await service.update('prod-uuid-1', {
+        stock: 20,
+        category_id: 'c-new',
+        rule_id: 'r-new',
+      });
+
+      expect(mockProductRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stock: 20,
+          category_id: 'c-new',
+          category: { id: 'c-new' },
+          rule_id: 'r-new',
+          growth_rule: { id: 'r-new' },
+        }),
+      );
+    });
+
+    it('should nullify relations when null or empty string is explicitly supplied', async () => {
+      const existingProduct = {
+        id: 'prod-uuid-2',
+        name: 'Product 2',
+        category_id: 'c-old',
+        category: { id: 'c-old' },
+        rule_id: 'r-old',
+        growth_rule: { id: 'r-old' },
+        price: 50,
+        stock: 5,
+        harvest_days: 30,
+        germination_days: 5,
+      };
+
+      mockProductRepo.findOne = jest.fn()
+        .mockResolvedValueOnce(existingProduct)
+        .mockResolvedValueOnce({
+          ...existingProduct,
+          category_id: null,
+          category: null,
+          rule_id: null,
+          growth_rule: null,
+        });
+
+      await service.update('prod-uuid-2', {
+        category_id: '',
+        rule_id: null as any,
+      });
+
+      expect(mockProductRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category_id: null,
+          category: null,
+          rule_id: null,
+          growth_rule: null,
+        }),
+      );
+    });
+  });
 });
 
