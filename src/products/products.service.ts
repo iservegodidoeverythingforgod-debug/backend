@@ -20,6 +20,17 @@ export class ProductsService {
     private readonly storageCleanupService: StorageCleanupService,
   ) {}
 
+  private sortProductGrowthStages(product: Product): void {
+    if (product?.growth_rule?.stages && Array.isArray(product.growth_rule.stages)) {
+      product.growth_rule.stages.sort((a, b) => (a.stage_order ?? 0) - (b.stage_order ?? 0));
+      for (const stage of product.growth_rule.stages) {
+        if (stage.conditions && Array.isArray(stage.conditions)) {
+          stage.conditions.sort((a, b) => (a.condition_order ?? 0) - (b.condition_order ?? 0));
+        }
+      }
+    }
+  }
+
   private async calculateReservedQuantities(productIds?: string[]): Promise<Map<string, number>> {
     try {
       const qb = this.orderItemRepository
@@ -77,18 +88,22 @@ export class ProductsService {
       qb.andWhere('product.is_active = :active', { active: true });
     }
 
-    if (
-      params?.categoryId &&
-      params.categoryId.trim() !== '' &&
-      params.categoryId !== 'null' &&
-      params.categoryId !== 'ALL'
-    ) {
-      const catFilter = params.categoryId.trim();
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(catFilter);
+    const catParam = params?.categoryId?.trim();
+    const isAllCategories =
+      !catParam ||
+      catParam === '' ||
+      catParam.toLowerCase() === 'all' ||
+      catParam.toLowerCase() === 'null' ||
+      catParam.toLowerCase() === 'undefined' ||
+      catParam === 'ทั้งหมด' ||
+      catParam === 'สินค้าทั้งหมด';
+
+    if (!isAllCategories) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(catParam);
       if (isUuid) {
-        qb.andWhere('(product.category_id = :catFilter OR category.id = :catFilter)', { catFilter });
+        qb.andWhere('(product.category_id = :catFilter OR category.id = :catFilter)', { catFilter: catParam });
       } else {
-        qb.andWhere('LOWER(category.name) = LOWER(:catFilter)', { catFilter });
+        qb.andWhere('LOWER(category.name) = LOWER(:catFilter)', { catFilter: catParam });
       }
     }
 
@@ -116,11 +131,6 @@ export class ProductsService {
       qb.orderBy('product.created_at', 'DESC');
     }
 
-    if (typeof qb.addOrderBy === 'function') {
-      qb.addOrderBy('growth_rule_stages.stage_order', 'ASC');
-      qb.addOrderBy('growth_rule_conditions.condition_order', 'ASC');
-    }
-
     if (params?.page !== undefined || params?.limit !== undefined) {
       const page = Math.max(1, params?.page || 1);
       const limit = Math.max(1, params?.limit || 12);
@@ -131,6 +141,7 @@ export class ProductsService {
       const reservedMap = await this.calculateReservedQuantities(productIds);
 
       const items = data.map((product) => {
+        this.sortProductGrowthStages(product);
         const reserved = reservedMap.get(product.id) || 0;
         const availableStock = Math.max(0, product.stock - reserved);
         return {
@@ -156,6 +167,7 @@ export class ProductsService {
     const reservedMap = await this.calculateReservedQuantities(productIds);
 
     return products.map((product) => {
+      this.sortProductGrowthStages(product);
       const reserved = reservedMap.get(product.id) || 0;
       const availableStock = Math.max(0, product.stock - reserved);
       return {
@@ -195,6 +207,8 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundException(`Product with ID ${id} not found`);
     }
+
+    this.sortProductGrowthStages(product);
 
     const reservedMap = await this.calculateReservedQuantities([product.id]);
     const reserved = reservedMap.get(product.id) || 0;

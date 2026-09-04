@@ -201,7 +201,6 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
         leftJoinAndSelect: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
         skip: jest.fn().mockReturnThis(),
         take: jest.fn().mockReturnThis(),
         getManyAndCount: jest.fn().mockResolvedValue([
@@ -222,6 +221,95 @@ describe('ProductsService - Bulk & Storage Cleanup', () => {
         { catFilter: 'Herbs' },
       );
       expect(result.total).toBe(1);
+    });
+
+    it('should NOT apply category filter when categoryId is ALL, all, ทั้งหมด, null, or empty string', async () => {
+      const testCases = ['ALL', 'all', 'ทั้งหมด', 'สินค้าทั้งหมด', 'null', 'undefined', '', '   '];
+
+      for (const cat of testCases) {
+        const qbMock: any = {
+          leftJoinAndSelect: jest.fn().mockReturnThis(),
+          andWhere: jest.fn().mockReturnThis(),
+          orderBy: jest.fn().mockReturnThis(),
+          skip: jest.fn().mockReturnThis(),
+          take: jest.fn().mockReturnThis(),
+          getManyAndCount: jest.fn().mockResolvedValue([
+            [
+              { id: 'prod-1', name: 'Product 1', stock: 10 },
+              { id: 'prod-2', name: 'Product 2', stock: 20 },
+            ],
+            2,
+          ]),
+        };
+        mockProductRepo.createQueryBuilder = jest.fn().mockReturnValue(qbMock);
+
+        const result: any = await service.findAll({
+          categoryId: cat,
+          page: 1,
+          limit: 12,
+        });
+
+        // andWhere should only be called for active products, not for category
+        expect(qbMock.andWhere).toHaveBeenCalledWith('product.is_active = :active', { active: true });
+        expect(qbMock.andWhere).not.toHaveBeenCalledWith(
+          expect.stringContaining('catFilter'),
+          expect.anything(),
+        );
+        expect(result.total).toBe(2);
+        expect(result.data.length).toBe(2);
+      }
+    });
+
+    it('should sort growth rule stages and conditions in-memory without queryBuilder addOrderBy', async () => {
+      const qbMock: any = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getManyAndCount: jest.fn().mockResolvedValue([
+          [
+            {
+              id: 'prod-1',
+              name: 'Product 1',
+              stock: 10,
+              growth_rule: {
+                id: 'rule-1',
+                stages: [
+                  {
+                    id: 'stage-2',
+                    stage_order: 2,
+                    conditions: [
+                      { id: 'cond-2b', condition_order: 2 },
+                      { id: 'cond-2a', condition_order: 1 },
+                    ],
+                  },
+                  {
+                    id: 'stage-1',
+                    stage_order: 1,
+                    conditions: [
+                      { id: 'cond-1b', condition_order: 3 },
+                      { id: 'cond-1a', condition_order: 1 },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+          1,
+        ]),
+      };
+      mockProductRepo.createQueryBuilder = jest.fn().mockReturnValue(qbMock);
+
+      const result: any = await service.findAll({ page: 1, limit: 12 });
+      const stages = result.data[0].growth_rule.stages;
+
+      expect(stages[0].stage_order).toBe(1);
+      expect(stages[1].stage_order).toBe(2);
+      expect(stages[0].conditions[0].condition_order).toBe(1);
+      expect(stages[0].conditions[1].condition_order).toBe(3);
+      expect(stages[1].conditions[0].condition_order).toBe(1);
+      expect(stages[1].conditions[1].condition_order).toBe(2);
     });
   });
 
